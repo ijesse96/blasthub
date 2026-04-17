@@ -1,0 +1,3 @@
+-- Intentionally empty for now.
+-- Keep this entrypoint so lobby client scripts can be added later
+-- without changing the Rojo tree.

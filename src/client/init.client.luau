@@ -1,0 +1,3 @@
+-- Turret control is handled by:
+-- Workspace > Anti Air > body > Seat > Script > control
+-- Keep this client init clear to avoid double controllers.
