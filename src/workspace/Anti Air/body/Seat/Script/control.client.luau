@@ -54,7 +54,7 @@ local originalMouseIcon = mouse.Icon
 local replicatedStorage = game:GetService("ReplicatedStorage")
 local userInputService = game:GetService("UserInputService")
 local contextActionService = game:GetService("ContextActionService")
-local USE_TOUCH_STYLE_CONTROLS_FOR_TESTING = true
+local USE_TOUCH_STYLE_CONTROLS_FOR_TESTING = false
 local isTouchDevice = USE_TOUCH_STYLE_CONTROLS_FOR_TESTING or userInputService.TouchEnabled
 local hitFlashRemote = replicatedStorage:WaitForChild(HIT_FLASH_REMOTE_NAME, 30)
 if not hitFlashRemote or not hitFlashRemote:IsA("RemoteEvent") then
@@ -440,6 +440,23 @@ else
 	end)
 end
 
+-- Yaw only: aim stays in the horizontal plane through the body pivot (no pitch).
+local function flattenAimToYaw(aimWorld: Vector3, pivotWorld: Vector3): Vector3
+	local offset = Vector3.new(aimWorld.X - pivotWorld.X, 0, aimWorld.Z - pivotWorld.Z)
+	local dist = offset.Magnitude
+	if dist < 1e-4 then
+		local look = gun.gun:GetPrimaryPartCFrame().LookVector
+		local flatLook = Vector3.new(look.X, 0, look.Z)
+		if flatLook.Magnitude < 1e-4 then
+			flatLook = Vector3.new(0, 0, -1)
+		else
+			flatLook = flatLook.Unit
+		end
+		return pivotWorld + flatLook * 100
+	end
+	return pivotWorld + offset.Unit * math.max(dist, 5)
+end
+
 while rs:Wait() do
 	updateCrosshairFromBarrel()
 	if isTouchDevice and aimTouchPosition and camera then
@@ -449,6 +466,10 @@ while rs:Wait() do
 	elseif not isTouchDevice then
 		aimpos = mouse.Hit.p
 	end
+
+	local pivotWorld = gun.body:GetPrimaryPartCFrame().Position
+	aimpos = flattenAimToYaw(aimpos, pivotWorld)
+
 	if (aimpos - gun.base.Position).magnitude > 3 then
 		local c = aimpos
 		local x = (gun.gun:GetPrimaryPartCFrame() * CFrame.new(0, 0, -100000)).x
