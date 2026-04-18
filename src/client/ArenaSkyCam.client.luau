@@ -1,4 +1,5 @@
 local ContextActionService = game:GetService("ContextActionService")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -8,6 +9,7 @@ local MAP_FOLDER_NAME = "Map"
 local RENDER_BIND_NAME = "BlastHubArenaSkyCam"
 local ACTION_NAME = "BlastHubArenaSkyView"
 local TOGGLE_KEY = Enum.KeyCode.M
+local SKY_VIEW_PLAYER_ATTRIBUTE = "ArenaSkyView"
 
 -- Slight zoom-out so lane props do not clip the frustum edge (1 = tight).
 local SKY_FRAMING_MARGIN = 1.06
@@ -15,6 +17,7 @@ local SKY_MIN_ALTITUDE = 10
 
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
+player:SetAttribute(SKY_VIEW_PLAYER_ATTRIBUTE, false)
 
 local skyViewActive = false
 local skyMapRef: Instance? = nil
@@ -22,6 +25,72 @@ local skyCFrame: CFrame? = nil
 local savedCameraType: Enum.CameraType = Enum.CameraType.Custom
 local savedCameraSubject: Instance? = nil
 local viewportConn: RBXScriptConnection? = nil
+
+local savedTouchGuiEnabled: boolean? = nil
+local touchGuiSuppressConn: RBXScriptConnection? = nil
+local savedTouchControlsEnabled: boolean? = nil
+
+local function getPlayerGuiForTouch(): PlayerGui
+	return player:WaitForChild("PlayerGui") :: PlayerGui
+end
+
+local function suppressDefaultTouchUiForSkyView()
+	if not UserInputService.TouchEnabled then
+		return
+	end
+
+	local okTc, curTc = pcall(function()
+		return GuiService.TouchControlsEnabled
+	end)
+	if okTc and typeof(curTc) == "boolean" then
+		savedTouchControlsEnabled = curTc
+		pcall(function()
+			GuiService.TouchControlsEnabled = false
+		end)
+	end
+
+	local tg = getPlayerGuiForTouch():FindFirstChild("TouchGui")
+	if tg and tg:IsA("ScreenGui") then
+		if savedTouchGuiEnabled == nil then
+			savedTouchGuiEnabled = tg.Enabled
+		end
+		tg.Enabled = false
+	end
+
+	if touchGuiSuppressConn then
+		return
+	end
+	touchGuiSuppressConn = RunService.RenderStepped:Connect(function()
+		if not skyViewActive then
+			return
+		end
+		local t = getPlayerGuiForTouch():FindFirstChild("TouchGui")
+		if t and t:IsA("ScreenGui") and t.Enabled then
+			t.Enabled = false
+		end
+	end)
+end
+
+local function restoreDefaultTouchUiAfterSkyView()
+	if touchGuiSuppressConn then
+		touchGuiSuppressConn:Disconnect()
+		touchGuiSuppressConn = nil
+	end
+
+	local tg = getPlayerGuiForTouch():FindFirstChild("TouchGui")
+	if tg and tg:IsA("ScreenGui") then
+		tg.Enabled = if savedTouchGuiEnabled == nil then true else savedTouchGuiEnabled
+	end
+	savedTouchGuiEnabled = nil
+
+	if savedTouchControlsEnabled ~= nil then
+		local restoreTc = savedTouchControlsEnabled
+		savedTouchControlsEnabled = nil
+		pcall(function()
+			GuiService.TouchControlsEnabled = restoreTc
+		end)
+	end
+end
 
 local function disconnectViewportListener()
 	if viewportConn then
@@ -159,6 +228,9 @@ local function enableSkyView(map: Instance)
 
 	connectViewportListener(camera)
 	RunService:BindToRenderStep(RENDER_BIND_NAME, Enum.RenderPriority.Camera.Value + 20, applySkyCamera)
+
+	player:SetAttribute(SKY_VIEW_PLAYER_ATTRIBUTE, true)
+	suppressDefaultTouchUiForSkyView()
 end
 
 local function disableSkyView()
@@ -166,7 +238,10 @@ local function disableSkyView()
 		return
 	end
 
+	player:SetAttribute(SKY_VIEW_PLAYER_ATTRIBUTE, false)
 	skyViewActive = false
+	restoreDefaultTouchUiAfterSkyView()
+
 	skyMapRef = nil
 	skyCFrame = nil
 
@@ -200,8 +275,8 @@ screenGui.Parent = playerGui
 
 local button = Instance.new("TextButton")
 button.Name = "SkyViewToggle"
-button.AnchorPoint = Vector2.new(0, 0)
-button.Position = UDim2.new(0, 16, 0, 16)
+button.AnchorPoint = Vector2.new(1, 1)
+button.Position = UDim2.new(1, -16, 1, -16)
 button.Size = UDim2.fromOffset(120, 36)
 button.BackgroundColor3 = Color3.fromRGB(28, 32, 40)
 button.BackgroundTransparency = 0.15

@@ -116,7 +116,14 @@ local hadJumpingStateEnabled = true
 local playerControls = nil
 local didDisableDefaultTouchControls = false
 local activeAimTouch: InputObject? = nil
-local aimTouchPosition: Vector2? = nil
+local lastAimTouchScreen: Vector2? = nil
+-- World XZ unit direction; updated by horizontal drag in left aim zone only (camera-independent).
+local touchAimDirXZ = Vector3.new(0, 0, -1)
+local MOBILE_YAW_SENSITIVITY = 0.0045
+local ARENA_SKY_VIEW_ATTR = "ArenaSkyView"
+local skyViewAttrConn: RBXScriptConnection? = nil
+local skyKeyboardFireBeganConn: RBXScriptConnection? = nil
+local skyKeyboardFireEndConn: RBXScriptConnection? = nil
 local touchStartConn: RBXScriptConnection? = nil
 local touchMoveConn: RBXScriptConnection? = nil
 local touchEndConn: RBXScriptConnection? = nil
@@ -310,6 +317,18 @@ end
 
 local function cleanup()
 	enableJumpInput()
+	if skyViewAttrConn then
+		skyViewAttrConn:Disconnect()
+		skyViewAttrConn = nil
+	end
+	if skyKeyboardFireBeganConn then
+		skyKeyboardFireBeganConn:Disconnect()
+		skyKeyboardFireBeganConn = nil
+	end
+	if skyKeyboardFireEndConn then
+		skyKeyboardFireEndConn:Disconnect()
+		skyKeyboardFireEndConn = nil
+	end
 	if didDisableDefaultTouchControls and playerControls then
 		playerControls:Enable()
 		didDisableDefaultTouchControls = false
@@ -348,7 +367,7 @@ local function cleanup()
 		touchEndConn = nil
 	end
 	activeAimTouch = nil
-	aimTouchPosition = nil
+	lastAimTouchScreen = nil
 	script:Destroy()
 end
 
@@ -369,7 +388,107 @@ humanoid.Jumping:Connect(function(active)
 	end
 end)
 
+local function isArenaSkyViewActive(): boolean
+	return player:GetAttribute(ARENA_SKY_VIEW_ATTR) == true
+end
+
 if isTouchDevice then
+	local gunPartInit = gun.gun:FindFirstChild("gunpart")
+	if gunPartInit and gunPartInit:IsA("BasePart") then
+		local l = gunPartInit.CFrame.LookVector
+		local f = Vector3.new(l.X, 0, l.Z)
+		if f.Magnitude > 1e-4 then
+			touchAimDirXZ = f.Unit
+		end
+	end
+
+	mobileFireGui, mobileShootButton = createMobileControls()
+	if mobileShootButton then
+		mobileShootButton.InputBegan:Connect(function(input)
+			if isArenaSkyViewActive() then
+				return
+			end
+			if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+				shootHeld = true
+				holdingFire = true
+				startFiring()
+			end
+		end)
+		mobileShootButton.InputEnded:Connect(function(input)
+			if isArenaSkyViewActive() then
+				return
+			end
+			if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+				shootHeld = false
+				stopFiring()
+			end
+		end)
+	end
+
+	local function unbindSkyKeyboardStyleFire()
+		if skyKeyboardFireBeganConn then
+			skyKeyboardFireBeganConn:Disconnect()
+			skyKeyboardFireBeganConn = nil
+		end
+		if skyKeyboardFireEndConn then
+			skyKeyboardFireEndConn:Disconnect()
+			skyKeyboardFireEndConn = nil
+		end
+	end
+
+	local function bindSkyKeyboardStyleFire()
+		unbindSkyKeyboardStyleFire()
+		skyKeyboardFireBeganConn = userInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
+			if not isArenaSkyViewActive() or gameProcessed then
+				return
+			end
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				shootHeld = true
+				holdingFire = true
+				startFiring()
+			end
+		end)
+		skyKeyboardFireEndConn = userInputService.InputEnded:Connect(function(input: InputObject, _gameProcessed: boolean)
+			if not isArenaSkyViewActive() then
+				return
+			end
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				shootHeld = false
+				stopFiring()
+			end
+		end)
+	end
+
+	local function applyMobileMovementForSkyView()
+		if not playerControls then
+			return
+		end
+		if player:GetAttribute(ARENA_SKY_VIEW_ATTR) == true then
+			playerControls:Disable()
+			didDisableDefaultTouchControls = true
+		else
+			playerControls:Enable()
+			didDisableDefaultTouchControls = false
+		end
+	end
+
+	local function onSkyViewAttrChanged()
+		applyMobileMovementForSkyView()
+		if player:GetAttribute(ARENA_SKY_VIEW_ATTR) == true then
+			activeAimTouch = nil
+			lastAimTouchScreen = nil
+			if mobileFireGui then
+				mobileFireGui.Enabled = false
+			end
+			bindSkyKeyboardStyleFire()
+		else
+			unbindSkyKeyboardStyleFire()
+			if mobileFireGui then
+				mobileFireGui.Enabled = true
+			end
+		end
+	end
+
 	local playerScripts = player:FindFirstChild("PlayerScripts")
 	if playerScripts then
 		local playerModule = playerScripts:FindFirstChild("PlayerModule")
@@ -380,52 +499,65 @@ if isTouchDevice then
 			end)
 			if ok and controlsOrErr then
 				playerControls = controlsOrErr
-				playerControls:Disable()
-				didDisableDefaultTouchControls = true
 			else
-				warn("[AntiAirFlashClient] Unable to disable default touch controls", controlsOrErr)
+				warn("[AntiAirFlashClient] Unable to get PlayerModule controls", controlsOrErr)
 			end
 		end
 	end
 
-	mobileFireGui, mobileShootButton = createMobileControls()
-	if mobileShootButton then
-		mobileShootButton.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-				shootHeld = true
-				holdingFire = true
-				startFiring()
-			end
-		end)
-		mobileShootButton.InputEnded:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-				shootHeld = false
-				stopFiring()
-			end
-		end)
-	end
+	skyViewAttrConn = player:GetAttributeChangedSignal(ARENA_SKY_VIEW_ATTR):Connect(onSkyViewAttrChanged)
+	onSkyViewAttrChanged()
 
 	touchStartConn = userInputService.TouchStarted:Connect(function(input: InputObject, gameProcessed: boolean)
+		if isArenaSkyViewActive() then
+			return
+		end
+
 		if gameProcessed or activeAimTouch then
 			return
 		end
 		local viewport = camera and camera.ViewportSize or Vector2.new(0, 0)
+		if viewport.X < 1 then
+			return
+		end
 		if input.Position.X <= (viewport.X * 0.5) then
 			activeAimTouch = input
-			aimTouchPosition = input.Position
+			lastAimTouchScreen = input.Position
 		end
 	end)
 
 	touchMoveConn = userInputService.TouchMoved:Connect(function(input: InputObject, _gameProcessed: boolean)
-		if input == activeAimTouch then
-			aimTouchPosition = input.Position
+		if isArenaSkyViewActive() then
+			return
+		end
+
+		if input ~= activeAimTouch or not lastAimTouchScreen then
+			return
+		end
+		local now = input.Position
+		local delta = now - lastAimTouchScreen
+		lastAimTouchScreen = now
+
+		local yaw = -delta.X * MOBILE_YAW_SENSITIVITY
+		local lookFlat = Vector3.new(touchAimDirXZ.X, 0, touchAimDirXZ.Z)
+		if lookFlat.Magnitude < 1e-5 then
+			lookFlat = Vector3.new(0, 0, -1)
+		else
+			lookFlat = lookFlat.Unit
+		end
+		local baseCf = CFrame.lookAt(Vector3.zero, lookFlat)
+		local rotated = CFrame.fromAxisAngle(Vector3.yAxis, yaw) * baseCf
+		local newLook = rotated.LookVector
+		newLook = Vector3.new(newLook.X, 0, newLook.Z)
+		if newLook.Magnitude > 1e-5 then
+			touchAimDirXZ = newLook.Unit
 		end
 	end)
 
 	touchEndConn = userInputService.TouchEnded:Connect(function(input: InputObject, _gameProcessed: boolean)
 		if input == activeAimTouch then
 			activeAimTouch = nil
-			aimTouchPosition = nil
+			lastAimTouchScreen = nil
 		end
 	end)
 else
@@ -459,15 +591,12 @@ end
 
 while rs:Wait() do
 	updateCrosshairFromBarrel()
-	if isTouchDevice and aimTouchPosition and camera then
-		local ray = camera:ViewportPointToRay(aimTouchPosition.X, aimTouchPosition.Y)
-		local rayDistance = 5000
-		aimpos = ray.Origin + (ray.Direction * rayDistance)
-	elseif not isTouchDevice then
-		aimpos = mouse.Hit.p
-	end
-
 	local pivotWorld = gun.body:GetPrimaryPartCFrame().Position
+	if not isTouchDevice or isArenaSkyViewActive() then
+		aimpos = mouse.Hit.p
+	else
+		aimpos = pivotWorld + touchAimDirXZ * 5000
+	end
 	aimpos = flattenAimToYaw(aimpos, pivotWorld)
 
 	if (aimpos - gun.base.Position).magnitude > 3 then

@@ -9,8 +9,8 @@ export type PlaceIds = {
 }
 
 local PlaceIds: PlaceIds = {
-	Lobby = 109858745367820,
-	MainGame = 80900269298159,
+	Lobby = 80900269298159,
+	MainGame = 130112747036452,
 }
 
 return PlaceIds
