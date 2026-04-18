@@ -9,13 +9,26 @@ local RENDER_BIND_NAME = "BlastHubArenaSkyCam"
 local ACTION_NAME = "BlastHubArenaSkyView"
 local TOGGLE_KEY = Enum.KeyCode.M
 
+-- Slight zoom-out so lane props do not clip the frustum edge (1 = tight).
+local SKY_FRAMING_MARGIN = 1.06
+local SKY_MIN_ALTITUDE = 10
+
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
 
 local skyViewActive = false
+local skyMapRef: Instance? = nil
 local skyCFrame: CFrame? = nil
 local savedCameraType: Enum.CameraType = Enum.CameraType.Custom
 local savedCameraSubject: Instance? = nil
+local viewportConn: RBXScriptConnection? = nil
+
+local function disconnectViewportListener()
+	if viewportConn then
+		viewportConn:Disconnect()
+		viewportConn = nil
+	end
+end
 
 local function accumulatePartAABB(cf: CFrame, size: Vector3, minV: Vector3, maxV: Vector3): (Vector3, Vector3)
 	local half = size * 0.5
@@ -51,6 +64,8 @@ local function getMapAABB(map: Instance): (Vector3?, Vector3?)
 	return minV, maxV
 end
 
+-- Fit the map's world-axis XZ bounding footprint inside the perspective frustum at the arena center.
+-- Uses camera Right/Up so landscape vs portrait (aspect) matches mobile rotation.
 local function computeSkyCFrame(map: Instance): CFrame?
 	local cam = Workspace.CurrentCamera
 	if not cam then
@@ -65,18 +80,35 @@ local function computeSkyCFrame(map: Instance): CFrame?
 	local center = (minV + maxV) * 0.5
 	local extents = maxV - minV
 	local extentX, extentY, extentZ = extents.X, extents.Y, extents.Z
-
-	-- Worst-case XZ footprint is the diagonal (max(X,Z) over-shoots long thin arenas).
-	local planarHalfDiagonal = 0.5 * math.sqrt(extentX * extentX + extentZ * extentZ)
+	local hx = extentX * 0.5
+	local hz = extentZ * 0.5
 
 	local vp = cam.ViewportSize
 	local aspect = if vp.Y > 1 then vp.X / vp.Y else 16 / 9
 	local tanHalf = math.tan(math.rad(cam.FieldOfView) * 0.5)
-	-- Looking straight down, horizontal screen pixels cover more world studs (× aspect).
-	local groundHalfPerStudUp = math.max(tanHalf * aspect, 0.001)
+	local halfWide = tanHalf * aspect
+	local halfTall = tanHalf
 
-	-- Small padding only; Y term is a slight cushion so lane props do not clip the frustum edge.
-	local altitude = planarHalfDiagonal / groundHalfPerStudUp + extentY * 0.08 + 6
+	-- Same straight-down pose as the final shot; Right/Up span the ground plane.
+	local probeEye = center + Vector3.new(0, 400, 0)
+	local orientationCf = CFrame.lookAt(probeEye, center)
+	local right = orientationCf.RightVector
+	local up = orientationCf.UpVector
+
+	local maxAlongRight = 0
+	local maxAlongUp = 0
+	for _, sx in { -1, 1 } do
+		for _, sz in { -1, 1 } do
+			local d = Vector3.new(sx * hx, 0, sz * hz)
+			maxAlongRight = math.max(maxAlongRight, math.abs(d:Dot(right)))
+			maxAlongUp = math.max(maxAlongUp, math.abs(d:Dot(up)))
+		end
+	end
+
+	local hWide = maxAlongRight / math.max(halfWide, 1e-5)
+	local hTall = maxAlongUp / math.max(halfTall, 1e-5)
+	local altitude = math.max(hWide, hTall, SKY_MIN_ALTITUDE) * SKY_FRAMING_MARGIN
+	altitude += extentY * 0.05
 
 	local eye = center + Vector3.new(0, altitude, 0)
 	return CFrame.lookAt(eye, center)
@@ -86,6 +118,21 @@ local function applySkyCamera()
 	if skyCFrame and camera then
 		camera.CFrame = skyCFrame
 	end
+end
+
+local function recomputeSkyFraming()
+	if not skyViewActive or not skyMapRef then
+		return
+	end
+	local cf = computeSkyCFrame(skyMapRef)
+	if cf then
+		skyCFrame = cf
+	end
+end
+
+local function connectViewportListener(cam: Camera)
+	disconnectViewportListener()
+	viewportConn = cam:GetPropertyChangedSignal("ViewportSize"):Connect(recomputeSkyFraming)
 end
 
 local function enableSkyView(map: Instance)
@@ -103,12 +150,14 @@ local function enableSkyView(map: Instance)
 	savedCameraType = camera.CameraType
 	savedCameraSubject = camera.CameraSubject
 
+	skyMapRef = map
 	skyCFrame = cf
 	skyViewActive = true
 	camera.CameraType = Enum.CameraType.Scriptable
 	camera.CameraSubject = nil
 	applySkyCamera()
 
+	connectViewportListener(camera)
 	RunService:BindToRenderStep(RENDER_BIND_NAME, Enum.RenderPriority.Camera.Value + 20, applySkyCamera)
 end
 
@@ -118,9 +167,10 @@ local function disableSkyView()
 	end
 
 	skyViewActive = false
+	skyMapRef = nil
 	skyCFrame = nil
 
-	-- Unbind is a no-op if this name was never bound (no IsBoundToRenderStep in engine).
+	disconnectViewportListener()
 	RunService:UnbindFromRenderStep(RENDER_BIND_NAME)
 
 	camera = Workspace.CurrentCamera
@@ -224,6 +274,8 @@ Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 		RunService:UnbindFromRenderStep(RENDER_BIND_NAME)
 		camera.CameraType = Enum.CameraType.Scriptable
 		camera.CameraSubject = nil
+		recomputeSkyFraming()
+		connectViewportListener(camera)
 		RunService:BindToRenderStep(RENDER_BIND_NAME, Enum.RenderPriority.Camera.Value + 20, applySkyCamera)
 	end
 end)
