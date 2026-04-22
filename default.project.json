@@ -59,6 +59,9 @@
       },
       "BulletArenaBoundaries": {
         "$path": "src/workspace/BulletArenaBoundaries.rbxm"
+      },
+      "Map": {
+        "$path": "src/workspace/Map.rbxm"
       }
     },
     "Lighting": {

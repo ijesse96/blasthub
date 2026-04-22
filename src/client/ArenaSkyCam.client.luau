@@ -16,6 +16,9 @@ local SKY_FRAMING_MARGIN = 1.06
 local SKY_MIN_ALTITUDE = 10
 -- Shifts sky framing along the camera ground-plane right axis (positive = camera / look target move that way).
 local SKY_HORIZONTAL_NUDGE_STUDS = 2.5
+-- ModelStreaming / replication can leave Map without BaseParts for a few frames (or longer).
+local MAP_GEOMETRY_WAIT_TIMEOUT_SEC = 30
+local MAP_GEOMETRY_POLL_SEC = 0.1
 
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
@@ -135,6 +138,22 @@ local function getMapAABB(map: Instance): (Vector3?, Vector3?)
 	return minV, maxV
 end
 
+local function mapHasFramableGeometry(map: Instance): boolean
+	local minV, maxV = getMapAABB(map)
+	return minV ~= nil and maxV ~= nil
+end
+
+local function waitForMapFramableGeometry(map: Instance): boolean
+	local deadline = os.clock() + MAP_GEOMETRY_WAIT_TIMEOUT_SEC
+	while os.clock() < deadline do
+		if mapHasFramableGeometry(map) then
+			return true
+		end
+		task.wait(MAP_GEOMETRY_POLL_SEC)
+	end
+	return false
+end
+
 -- Fit the map's world-axis XZ bounding footprint inside the perspective frustum at the arena center.
 -- Uses camera Right/Up so landscape vs portrait (aspect) matches mobile rotation.
 local function computeSkyCFrame(map: Instance): CFrame?
@@ -214,9 +233,29 @@ local function enableSkyView(map: Instance)
 		return
 	end
 
+	if not waitForMapFramableGeometry(map) then
+		local descendants = 0
+		local baseParts = 0
+		for _, inst in map:GetDescendants() do
+			descendants += 1
+			if inst:IsA("BasePart") then
+				baseParts += 1
+			end
+		end
+		warn(
+			string.format(
+				"[ArenaSkyCam] Map has no framable BaseParts after %.0fs (%d descendants, %d BaseParts). Check Map.rbxm / ModelStreaming / place uses default.project.json with Map.",
+				MAP_GEOMETRY_WAIT_TIMEOUT_SEC,
+				descendants,
+				baseParts
+			)
+		)
+		return
+	end
+
 	local cf = computeSkyCFrame(map)
 	if not cf then
-		warn("[ArenaSkyCam] Map folder has no BaseParts; cannot frame sky view.")
+		warn("[ArenaSkyCam] Could not compute sky CFrame after geometry appeared.")
 		return
 	end
 
@@ -298,7 +337,7 @@ corner.Parent = button
 
 local function refreshButtonLabel()
 	if skyViewActive then
-		button.Text = "Close sky"
+		button.Text = "Close view"
 	else
 		button.Text = "Sky view"
 	end
@@ -357,4 +396,14 @@ Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 		connectViewportListener(camera)
 		RunService:BindToRenderStep(RENDER_BIND_NAME, Enum.RenderPriority.Camera.Value + 20, applySkyCamera)
 	end
+end)
+
+task.defer(function()
+	local map = Workspace:WaitForChild(MAP_FOLDER_NAME, 60)
+	if not map then
+		warn("[ArenaSkyCam] Workspace.Map not found; sky view stays off until Map exists.")
+		return
+	end
+	enableSkyView(map)
+	refreshButtonLabel()
 end)

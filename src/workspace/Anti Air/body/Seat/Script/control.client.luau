@@ -214,8 +214,15 @@ local function fireOnce()
 	gun.gun.effect.bam:Play()
 	local a = Instance.new("Part")
 	local gunPart = gun.gun.gunpart
-	local spawnPosition = gun.gun.gunpart.Position + (gun.gun.gunpart.CFrame.lookVector * 5)
-	local shotTarget = aimpos
+	local spawnPosition = gunPart.Position + (gunPart.CFrame.LookVector * 5)
+	-- Match crosshair / barrel (not mouse.Hit) so pitch cannot skew shots off the reticle.
+	local aimLook = gunPart.CFrame.LookVector
+	if aimLook.Magnitude > 1e-5 then
+		aimLook = aimLook.Unit
+	else
+		aimLook = Vector3.new(0, 0, -1)
+	end
+	local shotTarget = spawnPosition + aimLook * CROSSHAIR_DISTANCE
 	-- Keep visual segment length larger than per-frame travel to avoid dotted tracers in sky view.
 	a.Size = Vector3.new(0.4, 0.4, 22)
 	a.CFrame = CFrame.new(spawnPosition, shotTarget)
@@ -225,7 +232,7 @@ local function fireOnce()
 	a.CanTouch = false
 	a.Anchored = true
 
-	local direction = (shotTarget - a.Position).Unit
+	local direction = aimLook
 	debugLog("Shot fired", "mouseTarget=", mouse.Target and mouse.Target:GetFullName() or "nil")
 
 	a.Parent = game.Workspace
@@ -553,6 +560,42 @@ else
 	end)
 end
 
+-- Intersect viewport ray with horizontal plane through pivot so camera pitch does not change yaw aim.
+local function worldPointOnPivotPlaneFromViewportRay(pivotWorld: Vector3, screenX: number, screenY: number): Vector3?
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return nil
+	end
+
+	local ray = cam:ViewportPointToRay(screenX, screenY)
+	local origin = ray.Origin
+	local dir = ray.Direction
+	if dir.Magnitude < 1e-6 then
+		return nil
+	end
+	dir = dir.Unit
+
+	local dy = dir.Y
+	if math.abs(dy) < 1e-4 then
+		local flat = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+		if flat.Magnitude < 1e-4 then
+			return nil
+		end
+		return pivotWorld + flat.Unit * CROSSHAIR_DISTANCE
+	end
+
+	local t = (pivotWorld.Y - origin.Y) / dy
+	if t < 0 then
+		local flat = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+		if flat.Magnitude < 1e-4 then
+			return nil
+		end
+		return pivotWorld + flat.Unit * CROSSHAIR_DISTANCE
+	end
+
+	return origin + dir * t
+end
+
 -- Yaw only: aim stays in the horizontal plane through the body pivot (no pitch).
 local function flattenAimToYaw(aimWorld: Vector3, pivotWorld: Vector3): Vector3
 	local offset = Vector3.new(aimWorld.X - pivotWorld.X, 0, aimWorld.Z - pivotWorld.Z)
@@ -574,7 +617,13 @@ while rs:Wait() do
 	updateCrosshairFromBarrel()
 	local pivotWorld = gun.body:GetPrimaryPartCFrame().Position
 	if not isTouchDevice or isArenaSkyViewActive() then
-		aimpos = mouse.Hit.p
+		local mouseLoc = userInputService:GetMouseLocation()
+		local planeHit = worldPointOnPivotPlaneFromViewportRay(pivotWorld, mouseLoc.X, mouseLoc.Y)
+		if planeHit then
+			aimpos = planeHit
+		else
+			aimpos = mouse.Hit.p
+		end
 	else
 		aimpos = pivotWorld + touchAimDirXZ * 5000
 	end
