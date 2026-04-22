@@ -19,6 +19,8 @@ local SKY_HORIZONTAL_NUDGE_STUDS = 2.5
 -- ModelStreaming / replication can leave Map without BaseParts for a few frames (or longer).
 local MAP_GEOMETRY_WAIT_TIMEOUT_SEC = 30
 local MAP_GEOMETRY_POLL_SEC = 0.1
+-- After teleport/join, BaseParts can stream in after the first AABB; debounce reframes.
+local MAP_STREAM_REFRAME_DEBOUNCE_SEC = 0.12
 
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
@@ -29,7 +31,9 @@ local skyMapRef: Instance? = nil
 local skyCFrame: CFrame? = nil
 local savedCameraType: Enum.CameraType = Enum.CameraType.Custom
 local savedCameraSubject: Instance? = nil
-local viewportConn: RBXScriptConnection? = nil
+local cameraFramingConns: { RBXScriptConnection } = {}
+local mapStreamingConn: RBXScriptConnection? = nil
+local mapStreamDebounceSeq = 0
 
 local savedTouchGuiEnabled: boolean? = nil
 local touchGuiSuppressConn: RBXScriptConnection? = nil
@@ -97,10 +101,17 @@ local function restoreDefaultTouchUiAfterSkyView()
 	end
 end
 
-local function disconnectViewportListener()
-	if viewportConn then
-		viewportConn:Disconnect()
-		viewportConn = nil
+local function disconnectCameraFramingListeners()
+	for _, c in cameraFramingConns do
+		c:Disconnect()
+	end
+	table.clear(cameraFramingConns)
+end
+
+local function disconnectMapStreamingListener()
+	if mapStreamingConn then
+		mapStreamingConn:Disconnect()
+		mapStreamingConn = nil
 	end
 end
 
@@ -207,6 +218,10 @@ local function computeSkyCFrame(map: Instance): CFrame?
 end
 
 local function applySkyCamera()
+	local cam = Workspace.CurrentCamera
+	if cam then
+		camera = cam
+	end
 	if skyCFrame and camera then
 		camera.CFrame = skyCFrame
 	end
@@ -222,9 +237,44 @@ local function recomputeSkyFraming()
 	end
 end
 
-local function connectViewportListener(cam: Camera)
-	disconnectViewportListener()
-	viewportConn = cam:GetPropertyChangedSignal("ViewportSize"):Connect(recomputeSkyFraming)
+local function scheduleMapStreamingReframe()
+	if not skyViewActive then
+		return
+	end
+	mapStreamDebounceSeq += 1
+	local seq = mapStreamDebounceSeq
+	task.delay(MAP_STREAM_REFRAME_DEBOUNCE_SEC, function()
+		if not skyViewActive or seq ~= mapStreamDebounceSeq then
+			return
+		end
+		recomputeSkyFraming()
+		applySkyCamera()
+	end)
+end
+
+local function connectCameraFramingListeners(cam: Camera)
+	disconnectCameraFramingListeners()
+	table.insert(cameraFramingConns, cam:GetPropertyChangedSignal("ViewportSize"):Connect(recomputeSkyFraming))
+	table.insert(cameraFramingConns, cam:GetPropertyChangedSignal("FieldOfView"):Connect(recomputeSkyFraming))
+end
+
+local function schedulePostEnableSkyFramingSettles()
+	task.defer(function()
+		if not skyViewActive then
+			return
+		end
+		recomputeSkyFraming()
+		applySkyCamera()
+	end)
+	for _, delaySec in { 0.08, 0.22, 0.5 } do
+		task.delay(delaySec, function()
+			if not skyViewActive then
+				return
+			end
+			recomputeSkyFraming()
+			applySkyCamera()
+		end)
+	end
 end
 
 local function enableSkyView(map: Instance)
@@ -253,6 +303,14 @@ local function enableSkyView(map: Instance)
 		return
 	end
 
+	-- Let default camera / viewport update after teleport before first fit.
+	RunService.Heartbeat:Wait()
+	RunService.Heartbeat:Wait()
+	camera = Workspace.CurrentCamera
+	if not camera then
+		return
+	end
+
 	local cf = computeSkyCFrame(map)
 	if not cf then
 		warn("[ArenaSkyCam] Could not compute sky CFrame after geometry appeared.")
@@ -269,8 +327,19 @@ local function enableSkyView(map: Instance)
 	camera.CameraSubject = nil
 	applySkyCamera()
 
-	connectViewportListener(camera)
+	disconnectMapStreamingListener()
+	mapStreamingConn = map.DescendantAdded:Connect(function(inst)
+		if not skyViewActive then
+			return
+		end
+		if inst:IsA("BasePart") then
+			scheduleMapStreamingReframe()
+		end
+	end)
+
+	connectCameraFramingListeners(camera)
 	RunService:BindToRenderStep(RENDER_BIND_NAME, Enum.RenderPriority.Camera.Value + 20, applySkyCamera)
+	schedulePostEnableSkyFramingSettles()
 
 	player:SetAttribute(SKY_VIEW_PLAYER_ATTRIBUTE, true)
 	suppressDefaultTouchUiForSkyView()
@@ -283,12 +352,14 @@ local function disableSkyView()
 
 	player:SetAttribute(SKY_VIEW_PLAYER_ATTRIBUTE, false)
 	skyViewActive = false
+	mapStreamDebounceSeq += 1
 	restoreDefaultTouchUiAfterSkyView()
 
 	skyMapRef = nil
 	skyCFrame = nil
 
-	disconnectViewportListener()
+	disconnectCameraFramingListeners()
+	disconnectMapStreamingListener()
 	RunService:UnbindFromRenderStep(RENDER_BIND_NAME)
 
 	camera = Workspace.CurrentCamera
@@ -393,7 +464,7 @@ Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 		camera.CameraType = Enum.CameraType.Scriptable
 		camera.CameraSubject = nil
 		recomputeSkyFraming()
-		connectViewportListener(camera)
+		connectCameraFramingListeners(camera)
 		RunService:BindToRenderStep(RENDER_BIND_NAME, Enum.RenderPriority.Camera.Value + 20, applySkyCamera)
 	end
 end)
