@@ -5,6 +5,7 @@
 local BOUNDARY_FOLDER_NAME = "BulletArenaBoundaries"
 local CONVEYOR_ITEM_ATTRIBUTE = "IsConveyorItem"
 local ANTI_AIR_NAME_PREFIX = "Anti Air"
+local HORIZONTAL_SURFACE_NORMAL_Y_MIN = 0.9
 
 export type RicochetOptions = {
 	speed: number,
@@ -62,6 +63,37 @@ local function reflectDirection(incidentUnit: Vector3, surfaceNormal: Vector3): 
 		return v
 	end
 	return r.Unit
+end
+
+local function getBounceNormal(incidentUnit: Vector3, surfaceNormal: Vector3): Vector3
+	local n = surfaceNormal.Unit
+	if incidentUnit.Unit:Dot(n) > 0 then
+		return -n
+	end
+	return n
+end
+
+local function getStableRicochetDirection(incidentUnit: Vector3, bounceNormal: Vector3): Vector3
+	local reflected = reflectDirection(incidentUnit, bounceNormal)
+	if math.abs(bounceNormal.Y) < HORIZONTAL_SURFACE_NORMAL_Y_MIN then
+		-- Wall/slanted-wall ricochets should stay level in anti-air mode.
+		local flattened = Vector3.new(reflected.X, 0, reflected.Z)
+		if flattened.Magnitude > 1e-4 then
+			return flattened.Unit
+		end
+		return incidentUnit.Unit
+	end
+	return reflected
+end
+
+local function getStableSeparationNormal(bounceNormal: Vector3): Vector3
+	if math.abs(bounceNormal.Y) < HORIZONTAL_SURFACE_NORMAL_Y_MIN then
+		local lateral = Vector3.new(bounceNormal.X, 0, bounceNormal.Z)
+		if lateral.Magnitude > 1e-4 then
+			return lateral.Unit
+		end
+	end
+	return bounceNormal
 end
 
 local function buildRaycastParams(projectile: BasePart, exclude: { Instance }): RaycastParams
@@ -128,8 +160,11 @@ local function start(
 			remaining -= seg
 			local inst = hit.Instance
 			if inst:IsA("BasePart") and (isBoundaryPart(inst) or isTurretPart(inst)) then
-				dir = reflectDirection(dir, hit.Normal)
-				pos = hit.Position + hit.Normal * 0.35 + dir * 0.25
+				local bounceNormal = getBounceNormal(dir, hit.Normal)
+				local separationNormal = getStableSeparationNormal(bounceNormal)
+				dir = getStableRicochetDirection(dir, bounceNormal)
+				-- Keep the projectile outside the collider along the same normal used for reflection.
+				pos = hit.Position + separationNormal * 0.35 + dir * 0.25
 			else
 				local convPart = getConveyorHitPart(inst)
 				if convPart then

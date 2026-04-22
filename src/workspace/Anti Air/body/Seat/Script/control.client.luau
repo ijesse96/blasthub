@@ -219,7 +219,7 @@ local function fireOnce()
 	-- Keep visual segment length larger than per-frame travel to avoid dotted tracers in sky view.
 	a.Size = Vector3.new(0.4, 0.4, 22)
 	a.CFrame = CFrame.new(spawnPosition, shotTarget)
-	a.BrickColor = BrickColor.new("Bright yellow")
+	a.BrickColor = BrickColor.new("Really red")
 	a.Material = "Neon"
 	a.CanCollide = false
 	a.CanTouch = false

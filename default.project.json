@@ -58,55 +58,7 @@
         }
       },
       "BulletArenaBoundaries": {
-        "$className": "Folder",
-        "WallEast": {
-          "$className": "Part",
-          "$properties": {
-            "Anchored": true,
-            "CanCollide": false,
-            "CastShadow": false,
-            "Locked": true,
-            "Transparency": 1,
-            "Position": [265, 100, 0],
-            "Size": [24, 220, 528]
-          }
-        },
-        "WallWest": {
-          "$className": "Part",
-          "$properties": {
-            "Anchored": true,
-            "CanCollide": false,
-            "CastShadow": false,
-            "Locked": true,
-            "Transparency": 1,
-            "Position": [-265, 100, 0],
-            "Size": [24, 220, 528]
-          }
-        },
-        "WallNorth": {
-          "$className": "Part",
-          "$properties": {
-            "Anchored": true,
-            "CanCollide": false,
-            "CastShadow": false,
-            "Locked": true,
-            "Transparency": 1,
-            "Position": [0, 100, 265],
-            "Size": [528, 220, 24]
-          }
-        },
-        "WallSouth": {
-          "$className": "Part",
-          "$properties": {
-            "Anchored": true,
-            "CanCollide": false,
-            "CastShadow": false,
-            "Locked": true,
-            "Transparency": 1,
-            "Position": [0, 100, -265],
-            "Size": [528, 220, 24]
-          }
-        }
+        "$path": "src/workspace/BulletArenaBoundaries.rbxm"
       }
     },
     "Lighting": {
