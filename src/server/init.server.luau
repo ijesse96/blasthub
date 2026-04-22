@@ -7,47 +7,36 @@ local SEAT_RETRY_DELAY = 0.12
 local VEHICLE_WAIT_SECONDS = 25
 
 local function isPlayerAntiAirModel(instance: Instance?): boolean
-	return instance ~= nil and instance:IsA("Model") and string.lower(instance.Name) == "anti air"
+	return instance ~= nil and instance:IsA("Model") and string.lower(instance.Name) == string.lower(VEHICLE_MODEL_NAME)
 end
 
-local function findVehicleModel(): Model?
-	local direct = Workspace:FindFirstChild(VEHICLE_MODEL_NAME)
-	if isPlayerAntiAirModel(direct) then
-		return direct
-	end
-
-	for _, child in Workspace:GetChildren() do
-		if isPlayerAntiAirModel(child) then
-			return child
-		end
-	end
-
+local function getAllAntiAirModels(): { Model }
+	local list: { Model } = {}
 	for _, inst in Workspace:GetDescendants() do
 		if isPlayerAntiAirModel(inst) then
-			return inst
+			table.insert(list, inst :: Model)
 		end
 	end
 
-	return nil
+	table.sort(list, function(a, b)
+		return a:GetFullName() < b:GetFullName()
+	end)
+
+	return list
 end
 
-local function waitForVehicleModel(): Model?
+local function waitUntilAnyAntiAirExists(): boolean
 	local deadline = os.clock() + VEHICLE_WAIT_SECONDS
-	local vehicle = findVehicleModel()
-	while not vehicle and os.clock() < deadline do
+	while os.clock() < deadline do
+		if #getAllAntiAirModels() > 0 then
+			return true
+		end
 		task.wait(0.15)
-		vehicle = findVehicleModel()
 	end
-	return vehicle
+	return false
 end
 
-local function findVehicleSeat(): BaseSeat?
-	local vehicle = waitForVehicleModel()
-	if not vehicle then
-		warn("[SpawnSeat] Anti Air model not found in Workspace (direct child, any casing, or nested).")
-		return nil
-	end
-
+local function findSeatOnVehicle(vehicle: Model): BaseSeat?
 	local preferred = vehicle:FindFirstChild("Seat", true)
 	if preferred and (preferred:IsA("Seat") or preferred:IsA("VehicleSeat")) then
 		return preferred
@@ -59,7 +48,22 @@ local function findVehicleSeat(): BaseSeat?
 		end
 	end
 
-	warn("[SpawnSeat] Anti Air model has no Seat or VehicleSeat:", vehicle:GetFullName())
+	return nil
+end
+
+local function findFreeVehicleSeat(): BaseSeat?
+	if not waitUntilAnyAntiAirExists() then
+		warn("[SpawnSeat] Anti Air model not found in Workspace (direct child, any casing, or nested).")
+		return nil
+	end
+
+	for _, vehicle in getAllAntiAirModels() do
+		local seat = findSeatOnVehicle(vehicle)
+		if seat and seat.Occupant == nil then
+			return seat
+		end
+	end
+
 	return nil
 end
 
@@ -86,12 +90,22 @@ local function seatCharacter(character: Model)
 	end
 	local humanoid = humanoidInst :: Humanoid
 
-	local seat = findVehicleSeat()
-	if not seat then
-		return
-	end
-
 	for _ = 1, MAX_SEAT_ATTEMPTS do
+		if isSeatedOnPlayerTurret(humanoid) then
+			return
+		end
+
+		local seat = findFreeVehicleSeat()
+		if not seat then
+			task.wait(SEAT_RETRY_DELAY)
+			continue
+		end
+
+		if seat.Occupant ~= nil and seat.Occupant ~= humanoid then
+			task.wait(SEAT_RETRY_DELAY)
+			continue
+		end
+
 		if humanoid.SeatPart == seat then
 			return
 		end
@@ -102,7 +116,11 @@ local function seatCharacter(character: Model)
 		task.wait(SEAT_RETRY_DELAY)
 	end
 
-	warn("[SpawnSeat] Could not seat player on turret seat after", MAX_SEAT_ATTEMPTS, "attempts")
+	warn(
+		"[SpawnSeat] Could not seat player on turret seat after",
+		MAX_SEAT_ATTEMPTS,
+		"attempts (no empty Anti Air seat, or Sit failed)."
+	)
 end
 
 local function onCharacterAdded(character: Model)

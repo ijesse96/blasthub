@@ -1,1 +1,2 @@
-rojo serve lobby.project.json --port 34873
+rojo serve lobby.project.json
+rojo serve default.project.json

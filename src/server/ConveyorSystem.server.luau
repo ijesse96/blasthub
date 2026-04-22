@@ -950,10 +950,6 @@ local function tryChargeShotCost(player: Player)
 end
 
 hitFlashRemote.OnServerEvent:Connect(function(player, hitInstance)
-	if player then
-		tryChargeShotCost(player)
-	end
-
 	debugLog(
 		"Remote received",
 		"player=",
@@ -973,8 +969,17 @@ hitFlashRemote.OnServerEvent:Connect(function(player, hitInstance)
 		return
 	end
 
+	if player then
+		tryChargeShotCost(player)
+	end
+
 	debugLog("Resolved conveyor model", hitModel:GetFullName())
 	onConveyorAntiAirHit(hitModel, player, nil)
+end)
+
+local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
+ConveyorAntiAirBridge.setProjectileConveyorHitHandler(function(model: Model, projectile: BasePart)
+	onConveyorAntiAirHit(model, nil, projectile)
 end)
 
 task.spawn(runConveyorSystem)

@@ -14,6 +14,8 @@ local SKY_VIEW_PLAYER_ATTRIBUTE = "ArenaSkyView"
 -- Slight zoom-out so lane props do not clip the frustum edge (1 = tight).
 local SKY_FRAMING_MARGIN = 1.06
 local SKY_MIN_ALTITUDE = 10
+-- Shifts sky framing along the camera ground-plane right axis (positive = camera / look target move that way).
+local SKY_HORIZONTAL_NUDGE_STUDS = 2.5
 
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
@@ -179,8 +181,10 @@ local function computeSkyCFrame(map: Instance): CFrame?
 	local altitude = math.max(hWide, hTall, SKY_MIN_ALTITUDE) * SKY_FRAMING_MARGIN
 	altitude += extentY * 0.05
 
-	local eye = center + Vector3.new(0, altitude, 0)
-	return CFrame.lookAt(eye, center)
+	local horizontal = right * SKY_HORIZONTAL_NUDGE_STUDS
+	local lookTarget = center + horizontal
+	local eye = center + Vector3.new(0, altitude, 0) + horizontal
+	return CFrame.lookAt(eye, lookTarget)
 end
 
 local function applySkyCamera()

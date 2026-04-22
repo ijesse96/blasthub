@@ -1,6 +1,10 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
-local Debris = game:GetService("Debris")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Ricochet = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirRicochetProjectile") :: ModuleScript)
+local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
 
 local ANTI_AIR_NAME_PREFIX = "Anti Air"
 local PLAYER_TURRET_NAME = "Anti Air"
@@ -15,12 +19,8 @@ local AIM_INTERVAL = 1 / 30
 local FIRE_INTERVAL = 0.22
 local CROSSHAIR_DISTANCE = 5000
 
-local TARGET_RADIUS = 5
-local MAX_SPEED = 99900
-local MAX_TORQUE = Vector3.new(4e6, 4e6, 0)
-local MAX_THRUST = 27500
-local THRUST_P = 99900
-local THRUST_D = 99900
+local BULLET_SPEED = 1100
+local BULLET_LIFETIME_SEC = 7
 
 local function getAllAntiAirTurrets(): { Model }
 	local turrets = {}
@@ -144,24 +144,22 @@ local function fireProjectile(gunModel: Model, aimPoint: Vector3)
 	projectile.BrickColor = BrickColor.new("Bright yellow")
 	projectile.Material = Enum.Material.Neon
 	projectile.CanCollide = false
-	projectile.CanTouch = true
+	projectile.CanTouch = false
+	projectile.Anchored = true
 
-	local rocket = Instance.new("RocketPropulsion")
-	rocket.CartoonFactor = 1
-	rocket.TargetRadius = TARGET_RADIUS
-	rocket.MaxSpeed = MAX_SPEED
-	rocket.MaxTorque = MAX_TORQUE
-	rocket.MaxThrust = MAX_THRUST
-	rocket.ThrustP = THRUST_P
-	rocket.ThrustD = THRUST_D
 	local direction = (aimPoint - projectile.Position).Unit
-	rocket.TargetOffset = projectile.Position + (direction * 10000000)
-	rocket.Parent = projectile
-	rocket:Fire()
 
 	attachBulletTag(projectile, gunpart)
 	projectile.Parent = Workspace
-	Debris:AddItem(projectile, 7)
+
+	Ricochet.start(projectile, direction, Workspace, RunService, {
+		speed = BULLET_SPEED,
+		maxLifetimeSeconds = BULLET_LIFETIME_SEC,
+		raycastExclude = { gunModel },
+		onConveyorHit = function(hitPart: BasePart)
+			ConveyorAntiAirBridge.notifyProjectileConveyorHit(hitPart, projectile)
+		end,
+	})
 end
 
 local function runTurretNpcLoop(turret: Model, seat: Seat)

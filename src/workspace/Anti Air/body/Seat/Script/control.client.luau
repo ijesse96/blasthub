@@ -1,11 +1,7 @@
 wait(0.20)
-local TARGET_RADIUS = 5
-local MAX_SPEED = 99900
-local MAX_TORQUE = Vector3.new(4e6, 4e6, 0)
-local MAX_THRUST = 27500
-local THRUST_P = 99900
-local THRUST_D = 99900
 local HEARTBEAT_SHOT_INTERVAL = 0.2
+local BULLET_SPEED = 1100
+local BULLET_LIFETIME_SEC = 7
 local RELOAD_SOUND_CUTOFF = 0.08
 local CROSSHAIR_DISTANCE = 5000
 local HIT_FLASH_REMOTE_NAME = "AntiAirConveyorHitFlash"
@@ -47,7 +43,8 @@ local initialGunPart = gun:FindFirstChild("gun", true) and gun.gun:FindFirstChil
 local aimpos = if initialGunPart and initialGunPart:IsA("BasePart")
 	then initialGunPart.Position + (initialGunPart.CFrame.LookVector * 5000)
 	else Vector3.new(0, 0, 0)
-local rs = game:GetService("RunService").RenderStepped
+local runService = game:GetService("RunService")
+local rs = runService.RenderStepped
 local camera = workspace.CurrentCamera
 local playerGui = player:WaitForChild("PlayerGui")
 local originalMouseIcon = mouse.Icon
@@ -61,6 +58,7 @@ if not hitFlashRemote or not hitFlashRemote:IsA("RemoteEvent") then
 	warn("[AntiAirFlashClient] Missing RemoteEvent", HIT_FLASH_REMOTE_NAME, "- turret client disabled")
 	return
 end
+local Ricochet = require(replicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirRicochetProjectile") :: ModuleScript)
 local DEBUG_FLASH = true
 
 local function debugLog(...)
@@ -144,19 +142,20 @@ local function createMobileControls()
 	local shootButton = Instance.new("TextButton")
 	shootButton.Name = "Shoot"
 	shootButton.AnchorPoint = Vector2.new(1, 1)
-	shootButton.Size = UDim2.new(0, 170, 0, 170)
-	shootButton.Position = UDim2.new(1, -32, 1, -36)
+	shootButton.Size = UDim2.fromOffset(120, 36)
+	shootButton.Position = UDim2.new(1, -16, 1, -60)
 	shootButton.BackgroundColor3 = Color3.fromRGB(212, 50, 50)
 	shootButton.BackgroundTransparency = 0.2
+	shootButton.BorderSizePixel = 0
 	shootButton.Text = "SHOOT"
 	shootButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-	shootButton.TextScaled = true
+	shootButton.TextSize = 16
 	shootButton.Font = Enum.Font.GothamBold
 	shootButton.AutoButtonColor = true
 	shootButton.Parent = shootGui
 
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(1, 0)
+	corner.CornerRadius = UDim.new(0, 8)
 	corner.Parent = shootButton
 
 	local stroke = Instance.new("UIStroke")
@@ -221,48 +220,30 @@ local function fireOnce()
 	a.CFrame = CFrame.new(spawnPosition, shotTarget)
 	a.BrickColor = BrickColor.new("Bright yellow")
 	a.Material = "Neon"
-	local rocketPropulsion = Instance.new("RocketPropulsion", a)
-	rocketPropulsion.CartoonFactor = 1
-	rocketPropulsion.TargetRadius = TARGET_RADIUS
-	rocketPropulsion.MaxSpeed = MAX_SPEED
-	rocketPropulsion.MaxTorque = MAX_TORQUE
-	rocketPropulsion.MaxThrust = MAX_THRUST
-	rocketPropulsion.ThrustP = THRUST_P
-	rocketPropulsion.ThrustD = THRUST_D
-	local direction = (shotTarget - a.Position).unit
-	rocketPropulsion.TargetOffset = a.Position + (direction * 10000000)
-	rocketPropulsion:Fire()
+	a.CanCollide = false
+	a.CanTouch = false
+	a.Anchored = true
+
+	local direction = (shotTarget - a.Position).Unit
 	debugLog("Shot fired", "mouseTarget=", mouse.Target and mouse.Target:GetFullName() or "nil")
 
-	if mouse.Target and hitFlashRemote and hitFlashRemote:IsA("RemoteEvent") then
-		debugLog("FireServer via mouse.Target", mouse.Target:GetFullName())
-		hitFlashRemote:FireServer(mouse.Target)
-	end
-
-	a.CanCollide = false
-	a.CanTouch = true
-	a.Touched:Connect(function(otherPart)
-		if otherPart and otherPart:IsA("BasePart") and hitFlashRemote and hitFlashRemote:IsA("RemoteEvent") then
-			debugLog("FireServer via projectile touched", otherPart:GetFullName())
-			hitFlashRemote:FireServer(otherPart)
-		end
-	end)
-
-	local rayParams = RaycastParams.new()
-	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	rayParams.FilterDescendantsInstances = { gun, player.Character }
-	local rayDirection = shotTarget - gunPart.Position
-	local rayResult = workspace:Raycast(gunPart.Position, rayDirection, rayParams)
-	if rayResult then
-		if hitFlashRemote and hitFlashRemote:IsA("RemoteEvent") then
-			debugLog("FireServer via raycast", rayResult.Instance:GetFullName())
-			hitFlashRemote:FireServer(rayResult.Instance)
-		end
-	else
-		debugLog("Raycast had no hit")
-	end
-
 	a.Parent = game.Workspace
+
+	local rayExclude: { Instance } = { gun }
+	if player.Character then
+		table.insert(rayExclude, player.Character)
+	end
+	Ricochet.start(a, direction, workspace, runService, {
+		speed = BULLET_SPEED,
+		maxLifetimeSeconds = BULLET_LIFETIME_SEC,
+		raycastExclude = rayExclude,
+		onConveyorHit = function(hitPart: BasePart)
+			if hitFlashRemote and hitFlashRemote:IsA("RemoteEvent") then
+				debugLog("FireServer via ricochet hit", hitPart:GetFullName())
+				hitFlashRemote:FireServer(hitPart)
+			end
+		end,
+	})
 	spawn(function()
 		gun.gun.barrel.Mesh.Offset = Vector3.new(0, -4, 0)
 		gun.gun.barrelb.Mesh.Offset = Vector3.new(0, -1, 0)
@@ -287,7 +268,6 @@ local function fireOnce()
 		b.Disabled = false
 	end
 
-	game:GetService("Debris"):AddItem(a, 7)
 	gun.gun.effect.reload:Play()
 	task.delay(RELOAD_SOUND_CUTOFF, function()
 		if gun.gun.effect.reload.IsPlaying then
