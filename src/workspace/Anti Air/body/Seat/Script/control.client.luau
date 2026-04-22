@@ -1,6 +1,6 @@
 wait(0.20)
 local HEARTBEAT_SHOT_INTERVAL = 0.2
-local BULLET_SPEED = 1100
+local BULLET_SPEED = 900
 local BULLET_LIFETIME_SEC = 7
 local RELOAD_SOUND_CUTOFF = 0.08
 local CROSSHAIR_DISTANCE = 5000
@@ -216,7 +216,8 @@ local function fireOnce()
 	local gunPart = gun.gun.gunpart
 	local spawnPosition = gun.gun.gunpart.Position + (gun.gun.gunpart.CFrame.lookVector * 5)
 	local shotTarget = aimpos
-	a.Size = Vector3.new(0.4, 0.4, 9)
+	-- Keep visual segment length larger than per-frame travel to avoid dotted tracers in sky view.
+	a.Size = Vector3.new(0.4, 0.4, 22)
 	a.CFrame = CFrame.new(spawnPosition, shotTarget)
 	a.BrickColor = BrickColor.new("Bright yellow")
 	a.Material = "Neon"

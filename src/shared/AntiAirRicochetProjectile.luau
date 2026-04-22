@@ -1,9 +1,10 @@
 --!strict
 -- Moves a non-physical bullet by raycasting each frame; reflects off Workspace.BulletArenaBoundaries
--- using RaycastResult.Normal; stops and reports conveyor hits via callback.
+-- and Anti Air turret geometry using RaycastResult.Normal; stops and reports conveyor hits via callback.
 
 local BOUNDARY_FOLDER_NAME = "BulletArenaBoundaries"
 local CONVEYOR_ITEM_ATTRIBUTE = "IsConveyorItem"
+local ANTI_AIR_NAME_PREFIX = "Anti Air"
 
 export type RicochetOptions = {
 	speed: number,
@@ -15,6 +16,21 @@ export type RicochetOptions = {
 local function isBoundaryPart(part: BasePart): boolean
 	local folder = part:FindFirstAncestor(BOUNDARY_FOLDER_NAME)
 	return folder ~= nil and folder:IsA("Folder")
+end
+
+local function isTurretPart(part: BasePart): boolean
+	local current: Instance? = part
+	while current do
+		if current:IsA("Model") then
+			local modelName = string.lower(current.Name)
+			local turretPrefix = string.lower(ANTI_AIR_NAME_PREFIX)
+			if modelName:sub(1, #turretPrefix) == turretPrefix then
+				return true
+			end
+		end
+		current = current.Parent
+	end
+	return false
 end
 
 local function getConveyorHitPart(instance: Instance): BasePart?
@@ -111,7 +127,7 @@ local function start(
 			local seg = (hit.Position - pos).Magnitude
 			remaining -= seg
 			local inst = hit.Instance
-			if inst:IsA("BasePart") and isBoundaryPart(inst) then
+			if inst:IsA("BasePart") and (isBoundaryPart(inst) or isTurretPart(inst)) then
 				dir = reflectDirection(dir, hit.Normal)
 				pos = hit.Position + hit.Normal * 0.35 + dir * 0.25
 			else
