@@ -3,7 +3,7 @@
 
 local CONVEYOR_ITEM_ATTRIBUTE = "IsConveyorItem"
 
-local handler: ((Model, BasePart) -> ())?
+local handler: ((Model, BasePart, Player?) -> ())?
 
 local function getConveyorModelFromInstance(instance: Instance): Model?
 	local current: Instance? = instance
@@ -18,14 +18,14 @@ end
 
 local M = {}
 
-function M.setProjectileConveyorHitHandler(fn: (model: Model, projectile: BasePart) -> ())
+function M.setProjectileConveyorHitHandler(fn: (model: Model, projectile: BasePart, shooter: Player?) -> ())
 	handler = fn
 end
 
-function M.notifyProjectileConveyorHit(hitPart: BasePart, projectile: BasePart)
+function M.notifyProjectileConveyorHit(hitPart: BasePart, projectile: BasePart, shooter: Player?)
 	local model = getConveyorModelFromInstance(hitPart)
 	if model and handler then
-		handler(model, projectile)
+		handler(model, projectile, shooter)
 	end
 end
 

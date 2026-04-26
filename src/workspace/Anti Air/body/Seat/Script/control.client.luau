@@ -1,10 +1,9 @@
 wait(0.20)
 local HEARTBEAT_SHOT_INTERVAL = 0.2
-local BULLET_SPEED = 900
-local BULLET_LIFETIME_SEC = 7
 local RELOAD_SOUND_CUTOFF = 0.08
 local CROSSHAIR_DISTANCE = 5000
-local HIT_FLASH_REMOTE_NAME = "AntiAirConveyorHitFlash"
+local FIRE_REMOTE_NAME = "AntiAirPlayerFire"
+local PLAYER_PROJECTILES_FOLDER_NAME = "AntiAirPlayerProjectiles"
 
 local function resolveGunModel(): Model?
 	local valueObject = script:FindFirstChild("Value")
@@ -53,12 +52,66 @@ local userInputService = game:GetService("UserInputService")
 local contextActionService = game:GetService("ContextActionService")
 local USE_TOUCH_STYLE_CONTROLS_FOR_TESTING = false
 local isTouchDevice = USE_TOUCH_STYLE_CONTROLS_FOR_TESTING or userInputService.TouchEnabled
-local hitFlashRemote = replicatedStorage:WaitForChild(HIT_FLASH_REMOTE_NAME, 30)
-if not hitFlashRemote or not hitFlashRemote:IsA("RemoteEvent") then
-	warn("[AntiAirFlashClient] Missing RemoteEvent", HIT_FLASH_REMOTE_NAME, "- turret client disabled")
+local fireRemote = replicatedStorage:WaitForChild(FIRE_REMOTE_NAME, 30)
+if not fireRemote or not fireRemote:IsA("RemoteEvent") then
+	warn("[AntiAirFlashClient] Missing RemoteEvent", FIRE_REMOTE_NAME, "- turret client disabled")
 	return
 end
 local Ricochet = require(replicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirRicochetProjectile") :: ModuleScript)
+
+local BULLET_SPEED = 600
+local BULLET_LIFETIME_SEC = 7
+local PREDICT_RECONCILE_TIMEOUT_SEC = 0.55
+
+type PredictPending = {
+	cancelRicochet: () -> (),
+	part: BasePart,
+}
+
+local pendingPredictionBySeq: { [number]: PredictPending } = {}
+local predictShotSeq = 0
+local predictReconcileConn: RBXScriptConnection? = nil
+
+local function clearAllPredictions()
+	for _, pending in pairs(pendingPredictionBySeq) do
+		pending.cancelRicochet()
+		if pending.part.Parent then
+			pending.part:Destroy()
+		end
+	end
+	table.clear(pendingPredictionBySeq)
+end
+
+local function tryReconcileWithServerProjectile(inst: BasePart)
+	local ownerId = inst:GetAttribute("AntiAirPredictOwner")
+	local seq = inst:GetAttribute("AntiAirPredictSeq")
+	if ownerId ~= player.UserId or typeof(seq) ~= "number" then
+		return
+	end
+	local pending = pendingPredictionBySeq[seq :: number]
+	if not pending then
+		return
+	end
+	pendingPredictionBySeq[seq :: number] = nil
+	pending.cancelRicochet()
+	if pending.part.Parent then
+		pending.part:Destroy()
+	end
+end
+
+-- Never use Workspace.DescendantAdded for this: it runs for every part/model in the game (huge cost).
+local projectileFolder = workspace:WaitForChild(PLAYER_PROJECTILES_FOLDER_NAME, 45)
+if not projectileFolder or not projectileFolder:IsA("Folder") then
+	warn("[AntiAirFlashClient] Missing folder", PLAYER_PROJECTILES_FOLDER_NAME, "- prediction reconcile disabled (server should create it).")
+else
+	predictReconcileConn = projectileFolder.ChildAdded:Connect(function(inst)
+		if not inst:IsA("BasePart") or inst.Name ~= "AntiAirPlayerProjectile" then
+			return
+		end
+		tryReconcileWithServerProjectile(inst)
+	end)
+end
+
 local DEBUG_FLASH = true
 
 local function debugLog(...)
@@ -211,47 +264,60 @@ local function fireOnce()
 		return
 	end
 
-	gun.gun.effect.bam:Play()
-	local a = Instance.new("Part")
+	-- Aim is applied locally only; server must use our barrel pose (spawn + look) for the replicated projectile.
 	local gunPart = gun.gun.gunpart
-	local spawnPosition = gunPart.Position + (gunPart.CFrame.LookVector * 5)
-	-- Match crosshair / barrel (not mouse.Hit) so pitch cannot skew shots off the reticle.
 	local aimLook = gunPart.CFrame.LookVector
 	if aimLook.Magnitude > 1e-5 then
 		aimLook = aimLook.Unit
 	else
 		aimLook = Vector3.new(0, 0, -1)
 	end
-	local shotTarget = spawnPosition + aimLook * CROSSHAIR_DISTANCE
-	-- Keep visual segment length larger than per-frame travel to avoid dotted tracers in sky view.
-	a.Size = Vector3.new(0.4, 0.4, 22)
-	a.CFrame = CFrame.new(spawnPosition, shotTarget)
-	a.BrickColor = BrickColor.new("Really red")
-	a.Material = "Neon"
-	a.CanCollide = false
-	a.CanTouch = false
-	a.Anchored = true
+	local spawnPosition = gunPart.Position + (aimLook * 5)
 
-	local direction = aimLook
-	debugLog("Shot fired", "mouseTarget=", mouse.Target and mouse.Target:GetFullName() or "nil")
+	-- Local prediction: instant tracer for the shooter only; removed when the server projectile replicates in.
+	predictShotSeq += 1
+	local shotSeq = predictShotSeq
+	local predictPart = Instance.new("Part")
+	predictPart.Name = "AntiAirPredictTracer"
+	predictPart.Size = Vector3.new(0.4, 0.4, 22)
+	predictPart.CFrame = CFrame.new(spawnPosition, spawnPosition + aimLook * CROSSHAIR_DISTANCE)
+	predictPart.BrickColor = BrickColor.new("Really red")
+	predictPart.Material = Enum.Material.Neon
+	predictPart.CanCollide = false
+	predictPart.CanTouch = false
+	predictPart.Anchored = true
+	predictPart.Parent = workspace
 
-	a.Parent = game.Workspace
-
-	local rayExclude: { Instance } = { gun }
+	local rayExclude: { Instance } = { gun, predictPart }
 	if player.Character then
 		table.insert(rayExclude, player.Character)
 	end
-	Ricochet.start(a, direction, workspace, runService, {
+	local cancelRicochet = Ricochet.start(predictPart, aimLook, workspace, runService, {
 		speed = BULLET_SPEED,
 		maxLifetimeSeconds = BULLET_LIFETIME_SEC,
 		raycastExclude = rayExclude,
-		onConveyorHit = function(hitPart: BasePart)
-			if hitFlashRemote and hitFlashRemote:IsA("RemoteEvent") then
-				debugLog("FireServer via ricochet hit", hitPart:GetFullName())
-				hitFlashRemote:FireServer(hitPart)
-			end
-		end,
+		onConveyorHit = function(_hitPart: BasePart) end,
 	})
+	pendingPredictionBySeq[shotSeq] = {
+		cancelRicochet = cancelRicochet,
+		part = predictPart,
+	}
+	task.delay(PREDICT_RECONCILE_TIMEOUT_SEC, function()
+		local pending = pendingPredictionBySeq[shotSeq]
+		if not pending or pending.part ~= predictPart then
+			return
+		end
+		pendingPredictionBySeq[shotSeq] = nil
+		pending.cancelRicochet()
+		if predictPart.Parent then
+			predictPart:Destroy()
+		end
+	end)
+
+	if fireRemote and fireRemote:IsA("RemoteEvent") then
+		fireRemote:FireServer(spawnPosition, aimLook, shotSeq)
+	end
+	debugLog("Shot requested (server-spawned projectile + local predict)")
 	spawn(function()
 		gun.gun.barrel.Mesh.Offset = Vector3.new(0, -4, 0)
 		gun.gun.barrelb.Mesh.Offset = Vector3.new(0, -1, 0)
@@ -264,17 +330,6 @@ local function fireOnce()
 			rs:Wait()
 		end
 	end)
-
-	local bulletTemplate = script:FindFirstChild("bullet")
-	if bulletTemplate and (bulletTemplate:IsA("Script") or bulletTemplate:IsA("LocalScript")) then
-		local b = bulletTemplate:Clone()
-		b.Parent = a
-		local bulletValue = b:FindFirstChild("Value")
-		if bulletValue and bulletValue:IsA("ObjectValue") then
-			bulletValue.Value = gun.gun.gunpart
-		end
-		b.Disabled = false
-	end
 
 	gun.gun.effect.reload:Play()
 	task.delay(RELOAD_SOUND_CUTOFF, function()
@@ -305,6 +360,11 @@ end
 
 local function cleanup()
 	enableJumpInput()
+	if predictReconcileConn then
+		predictReconcileConn:Disconnect()
+		predictReconcileConn = nil
+	end
+	clearAllPredictions()
 	if skyViewAttrConn then
 		skyViewAttrConn:Disconnect()
 		skyViewAttrConn = nil

@@ -3,6 +3,8 @@ local ServerStorage = game:GetService("ServerStorage")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
 
 local HIT_FLASH_REMOTE_NAME = "AntiAirConveyorHitFlash"
 local CASH_FLY_VFX_REMOTE_NAME = "CashFlyVfx"
@@ -38,11 +40,11 @@ local CONVEYOR_ITEMS_FOLDER = "ConveyorItems"
 local ACTIVE_ITEMS_FOLDER = "ConveyorActiveItems"
 local CONVEYOR_NAME_PREFIX = "Conveyor"
 
-local SPAWN_INTERVAL = 1.25
+local SPAWN_INTERVAL = 2.1
 local CONVEYOR_SPEED = 11
-local MAX_ACTIVE_ITEMS_PER_CONVEYOR = 12
-local TARGET_ACTIVE_ITEMS_PER_CONVEYOR = 6
-local ITEM_SPACING = 18
+local MAX_ACTIVE_ITEMS_PER_CONVEYOR = 16
+local TARGET_ACTIVE_ITEMS_PER_CONVEYOR = 9
+local ITEM_SPACING = 26
 local END_REACHED_THRESHOLD = 3
 local Y_OFFSET = 2.5
 local TARGET_ITEM_MAX_AXIS_STUDS = 40
@@ -54,10 +56,10 @@ local SCALE_ATTRIBUTE = "ConveyorSpawnScale"
 local CONVEYOR_ITEM_ATTRIBUTE = "IsConveyorItem"
 local CONVEYOR_HEALTH_ATTRIBUTE = "ConveyorHealth"
 local CONVEYOR_MAX_HEALTH_ATTRIBUTE = "ConveyorMaxHealth"
-local CONVEYOR_HEALTH_MIN = 18
-local CONVEYOR_HEALTH_MAX = 300
+local CONVEYOR_HEALTH_MIN = 1
+local CONVEYOR_HEALTH_MAX = 20
 local CONVEYOR_HIT_DAMAGE_MIN = 1
-local CONVEYOR_HIT_DAMAGE_MAX = 5
+local CONVEYOR_HIT_DAMAGE_MAX = 1
 local RARE_GLOW_ROLL_MAX = 100
 local RARE_GOLD_GLOW_CHANCE_PERCENT = 1
 local RARE_PURPLE_GLOW_CHANCE_PERCENT = 10
@@ -67,21 +69,29 @@ local GOLD_TIER_HEALTH_MIN = 500
 local GOLD_TIER_HEALTH_MAX = 1000
 local CONVEYOR_RARE_PURPLE_ATTRIBUTE = "ConveyorRarePurpleGlow"
 local CONVEYOR_RARE_BLUE_ATTRIBUTE = "ConveyorRareBlueGlow"
-local PURPLE_TIER_HEALTH_MIN = 200
-local PURPLE_TIER_HEALTH_MAX = 450
-local BLUE_TIER_HEALTH_MIN = 150
-local BLUE_TIER_HEALTH_MAX = 250
+local PURPLE_TIER_HEALTH_MIN = 25
+local PURPLE_TIER_HEALTH_MAX = 50
+local BLUE_TIER_HEALTH_MIN = 10
+local BLUE_TIER_HEALTH_MAX = 30
 local CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE = "ConveyorItemCashReward"
 local NO_GLOW_CASH_MIN = 1
 local NO_GLOW_CASH_MAX = 20
-local BLUE_CASH_MIN = 20
-local BLUE_CASH_MAX = 25
+local NO_GLOW_HIGH_HP_CASH_MIN = 10
+local NO_GLOW_HIGH_HP_CASH_MAX = 30
+local NO_GLOW_HIGH_HP_THRESHOLD = 10
+local BLUE_CASH_MIN = 25
+local BLUE_CASH_MAX = 50
 local PURPLE_CASH_MIN = 50
 local PURPLE_CASH_MAX = 100
 local GOLD_CASH_REWARD = 500
 local TURRET_FLOAT_GOAL_HEIGHT = 6
 local FLOAT_TO_TURRET_SECONDS = 1.9
 local FLOAT_SHRINK_END_SCALE = 0.1
+local CASH_POP_RISE_STUDS = 8
+local CASH_POP_DURATION = 1.5
+local CASH_POP_FADE_START_ALPHA = 0.42
+local CASH_POP_TEXT_COLOR = Color3.fromRGB(72, 235, 130)
+local CASH_POP_STROKE_COLOR = Color3.fromRGB(14, 72, 36)
 local FLASH_DEBOUNCE_ATTRIBUTE = "ConveyorHitFlashActive"
 local FLASH_BLINK_COUNT = 1
 local FLASH_ON_TIME = 0.12
@@ -164,6 +174,66 @@ local function getOrCreateDeathVfxFolder(): Folder
 	folder.Name = "ConveyorDeathVFX"
 	folder.Parent = Workspace
 	return folder
+end
+
+local function spawnWorldCashPopBillboard(worldPos: Vector3, amount: number)
+	local anchor = Instance.new("Part")
+	anchor.Name = "ConveyorCashPop"
+	anchor.Size = Vector3.new(0.15, 0.15, 0.15)
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	local startPos = worldPos + Vector3.new(0, 2, 0)
+	anchor.Position = startPos
+	anchor.Parent = getOrCreateDeathVfxFolder()
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "CashPop"
+	billboard.AlwaysOnTop = true
+	billboard.LightInfluence = 0
+	billboard.MaxDistance = 450
+	billboard.Size = UDim2.fromOffset(140, 44)
+	billboard.StudsOffsetWorldSpace = Vector3.zero
+	billboard.Parent = anchor
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Amount"
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Font = Enum.Font.GothamBold
+	label.TextScaled = true
+	label.TextColor3 = CASH_POP_TEXT_COLOR
+	label.TextStrokeColor3 = CASH_POP_STROKE_COLOR
+	label.TextStrokeTransparency = 0.35
+	label.TextTransparency = 0
+	label.Text = string.format("+$%d", amount)
+	label.Parent = billboard
+
+	local sizeCap = Instance.new("UITextSizeConstraint")
+	sizeCap.MaxTextSize = 30
+	sizeCap.MinTextSize = 14
+	sizeCap.Parent = label
+
+	local goalPos = startPos + Vector3.new(0, CASH_POP_RISE_STUDS, 0)
+	local moveTween = TweenService:Create(
+		anchor,
+		TweenInfo.new(CASH_POP_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Position = goalPos }
+	)
+	moveTween:Play()
+
+	local fadeDuration = CASH_POP_DURATION * (1 - CASH_POP_FADE_START_ALPHA)
+	task.delay(CASH_POP_DURATION * CASH_POP_FADE_START_ALPHA, function()
+		if not label.Parent then
+			return
+		end
+		local fadeInfo = TweenInfo.new(fadeDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		TweenService:Create(label, fadeInfo, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+	end)
+
+	Debris:AddItem(anchor, CASH_POP_DURATION + 0.35)
 end
 
 local function getConveyorItemsFolder(): Folder?
@@ -569,10 +639,11 @@ local function applyRandomHitDamage(model: Model, turretModel: Model?, rewardPla
 	end
 
 	if newHealth <= 0 then
-		if rewardPlayer then
-			local payout = model:GetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE)
-			if typeof(payout) == "number" and payout > 0 then
-				local worldPos = model:GetPivot().Position
+		local payout = model:GetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE)
+		if typeof(payout) == "number" and payout > 0 then
+			local worldPos = model:GetPivot().Position
+			spawnWorldCashPopBillboard(worldPos, payout)
+			if rewardPlayer then
 				Money.addCash(rewardPlayer, payout)
 				local flyRemote = ReplicatedStorage:FindFirstChild(CASH_FLY_VFX_REMOTE_NAME)
 				if flyRemote and flyRemote:IsA("RemoteEvent") then
@@ -655,8 +726,13 @@ end
 
 local function getConveyors(): { ConveyorState }
 	local conveyors = {}
+	local seenModel: { [Model]: boolean } = {}
 
 	local function tryAddConveyor(model: Model)
+		if seenModel[model] then
+			return
+		end
+
 		if not string.find(model.Name, "^" .. CONVEYOR_NAME_PREFIX) then
 			return
 		end
@@ -676,6 +752,7 @@ local function getConveyors(): { ConveyorState }
 			return
 		end
 
+		seenModel[model] = true
 		table.insert(conveyors, {
 			model = model,
 			startPart = startPart,
@@ -688,12 +765,6 @@ local function getConveyors(): { ConveyorState }
 			templateBag = {},
 			templateBagIndex = 1,
 		})
-	end
-
-	for _, child in Workspace:GetChildren() do
-		if child:IsA("Model") then
-			tryAddConveyor(child)
-		end
 	end
 
 	for _, descendant in Workspace:GetDescendants() do
@@ -853,7 +924,15 @@ local function spawnConveyorItem(conveyor: ConveyorState, templates: { Instance 
 	elseif model:GetAttribute(CONVEYOR_RARE_BLUE_ATTRIBUTE) == true then
 		model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, math.random(BLUE_CASH_MIN, BLUE_CASH_MAX))
 	else
-		model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, math.random(NO_GLOW_CASH_MIN, NO_GLOW_CASH_MAX))
+		local spawnMaxHp = model:GetAttribute(CONVEYOR_MAX_HEALTH_ATTRIBUTE)
+		if typeof(spawnMaxHp) == "number" and spawnMaxHp > NO_GLOW_HIGH_HP_THRESHOLD then
+			model:SetAttribute(
+				CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE,
+				math.random(NO_GLOW_HIGH_HP_CASH_MIN, NO_GLOW_HIGH_HP_CASH_MAX)
+			)
+		else
+			model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, math.random(NO_GLOW_CASH_MIN, NO_GLOW_CASH_MAX))
+		end
 	end
 	local spawnPos = Vector3.new(conveyor.startPart.Position.X, conveyor.beltY, conveyor.startPart.Position.Z)
 	setModelPosition(model, spawnPos)
@@ -917,6 +996,11 @@ local function runConveyorSystem()
 		for _, conveyor in conveyors do
 			updateConveyor(conveyor, dt)
 
+			-- Below target, never wait on an old "belt was full" spawn clock (avoids long dry spells).
+			if #conveyor.activeItems < TARGET_ACTIVE_ITEMS_PER_CONVEYOR then
+				conveyor.nextSpawnTime = math.min(conveyor.nextSpawnTime, now)
+			end
+
 			if #conveyor.activeItems < TARGET_ACTIVE_ITEMS_PER_CONVEYOR and now >= conveyor.nextSpawnTime then
 				local didSpawn = spawnConveyorItem(conveyor, templates, activeFolder)
 				if didSpawn then
@@ -978,8 +1062,11 @@ hitFlashRemote.OnServerEvent:Connect(function(player, hitInstance)
 end)
 
 local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
-ConveyorAntiAirBridge.setProjectileConveyorHitHandler(function(model: Model, projectile: BasePart)
-	onConveyorAntiAirHit(model, nil, projectile)
+ConveyorAntiAirBridge.setProjectileConveyorHitHandler(function(model: Model, projectile: BasePart, shooter: Player?)
+	if shooter then
+		tryChargeShotCost(shooter)
+	end
+	onConveyorAntiAirHit(model, shooter, projectile)
 end)
 
 task.spawn(runConveyorSystem)
