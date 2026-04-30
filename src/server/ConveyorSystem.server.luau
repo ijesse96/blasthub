@@ -11,13 +11,8 @@ local CASH_FLY_VFX_REMOTE_NAME = "CashFlyVfx"
 local SHOT_COST_AMOUNT = 1
 local SHOT_COST_DEBOUNCE_SECONDS = 0.12
 
-local moneyModule = script.Parent:FindFirstChild("Money") or script.Parent:WaitForChild("Money", 30)
-if not moneyModule or not moneyModule:IsA("ModuleScript") then
-	error(
-		"[ConveyorSystem] Expected ModuleScript 'Money' as a sibling under ServerScriptService.Server (add src/server/Money.luau and sync with Rojo)."
-	)
-end
-local Money = require(moneyModule)
+local Money = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Money"))
+local MatchRoundBridge = require(script.Parent:WaitForChild("MatchRoundBridge"))
 
 local function ensureRemoteEvent(name: string)
 	local existing = ReplicatedStorage:FindFirstChild(name)
@@ -40,11 +35,11 @@ local CONVEYOR_ITEMS_FOLDER = "ConveyorItems"
 local ACTIVE_ITEMS_FOLDER = "ConveyorActiveItems"
 local CONVEYOR_NAME_PREFIX = "Conveyor"
 
-local SPAWN_INTERVAL = 2.1
+local SPAWN_INTERVAL = 1.2
 local CONVEYOR_SPEED = 11
-local MAX_ACTIVE_ITEMS_PER_CONVEYOR = 16
-local TARGET_ACTIVE_ITEMS_PER_CONVEYOR = 9
-local ITEM_SPACING = 26
+local MAX_ACTIVE_ITEMS_PER_CONVEYOR = 28
+local TARGET_ACTIVE_ITEMS_PER_CONVEYOR = 14
+local ITEM_SPACING = 20
 local END_REACHED_THRESHOLD = 3
 local Y_OFFSET = 2.5
 local TARGET_ITEM_MAX_AXIS_STUDS = 40
@@ -65,8 +60,8 @@ local RARE_GOLD_GLOW_CHANCE_PERCENT = 1
 local RARE_PURPLE_GLOW_CHANCE_PERCENT = 10
 local RARE_BLUE_GLOW_CHANCE_PERCENT = 20
 local CONVEYOR_RARE_GOLD_ATTRIBUTE = "ConveyorRareGoldGlow"
-local GOLD_TIER_HEALTH_MIN = 500
-local GOLD_TIER_HEALTH_MAX = 1000
+local GOLD_TIER_HEALTH_MIN = 50
+local GOLD_TIER_HEALTH_MAX = 100
 local CONVEYOR_RARE_PURPLE_ATTRIBUTE = "ConveyorRarePurpleGlow"
 local CONVEYOR_RARE_BLUE_ATTRIBUTE = "ConveyorRareBlueGlow"
 local PURPLE_TIER_HEALTH_MIN = 25
@@ -82,8 +77,9 @@ local NO_GLOW_HIGH_HP_THRESHOLD = 10
 local BLUE_CASH_MIN = 25
 local BLUE_CASH_MAX = 50
 local PURPLE_CASH_MIN = 50
-local PURPLE_CASH_MAX = 100
-local GOLD_CASH_REWARD = 500
+local PURPLE_CASH_MAX = 75
+local GOLD_CASH_MIN = 100
+local GOLD_CASH_MAX = 150
 local TURRET_FLOAT_GOAL_HEIGHT = 6
 local FLOAT_TO_TURRET_SECONDS = 1.9
 local FLOAT_SHRINK_END_SCALE = 0.1
@@ -160,6 +156,25 @@ local function removeConveyorItemFromTracking(model: Model)
 				table.remove(items, i)
 				return
 			end
+		end
+	end
+end
+
+local function clearAllConveyorFish()
+	for _, conveyor in conveyorStatesRef do
+		for i = #conveyor.activeItems, 1, -1 do
+			local item = conveyor.activeItems[i]
+			if item and item.Parent then
+				item:Destroy()
+			end
+			table.remove(conveyor.activeItems, i)
+		end
+	end
+
+	local activeFolder = Workspace:FindFirstChild(ACTIVE_ITEMS_FOLDER)
+	if activeFolder and activeFolder:IsA("Folder") then
+		for _, child in activeFolder:GetChildren() do
+			child:Destroy()
 		end
 	end
 end
@@ -645,6 +660,7 @@ local function applyRandomHitDamage(model: Model, turretModel: Model?, rewardPla
 			spawnWorldCashPopBillboard(worldPos, payout)
 			if rewardPlayer then
 				Money.addCash(rewardPlayer, payout)
+				MatchRoundBridge.recordCoinWon(rewardPlayer, payout)
 				local flyRemote = ReplicatedStorage:FindFirstChild(CASH_FLY_VFX_REMOTE_NAME)
 				if flyRemote and flyRemote:IsA("RemoteEvent") then
 					flyRemote:FireClient(rewardPlayer, worldPos, payout)
@@ -918,7 +934,7 @@ local function spawnConveyorItem(conveyor: ConveyorState, templates: { Instance 
 	end
 
 	if model:GetAttribute(CONVEYOR_RARE_GOLD_ATTRIBUTE) == true then
-		model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, GOLD_CASH_REWARD)
+		model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, math.random(GOLD_CASH_MIN, GOLD_CASH_MAX))
 	elseif model:GetAttribute(CONVEYOR_RARE_PURPLE_ATTRIBUTE) == true then
 		model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, math.random(PURPLE_CASH_MIN, PURPLE_CASH_MAX))
 	elseif model:GetAttribute(CONVEYOR_RARE_BLUE_ATTRIBUTE) == true then
@@ -1001,7 +1017,11 @@ local function runConveyorSystem()
 				conveyor.nextSpawnTime = math.min(conveyor.nextSpawnTime, now)
 			end
 
-			if #conveyor.activeItems < TARGET_ACTIVE_ITEMS_PER_CONVEYOR and now >= conveyor.nextSpawnTime then
+			if
+				MatchRoundBridge.allowFishSpawn()
+				and #conveyor.activeItems < TARGET_ACTIVE_ITEMS_PER_CONVEYOR
+				and now >= conveyor.nextSpawnTime
+			then
 				local didSpawn = spawnConveyorItem(conveyor, templates, activeFolder)
 				if didSpawn then
 					conveyor.nextSpawnTime = now + SPAWN_INTERVAL
@@ -1020,6 +1040,9 @@ local hitFlashRemote = getOrCreateHitFlashRemote()
 local lastShotCostAtByUserId: { [number]: number } = {}
 
 local function tryChargeShotCost(player: Player)
+	if not MatchRoundBridge.allowShooting(player) then
+		return
+	end
 	if not isPlayerInAllowedTurret(player) then
 		return
 	end
@@ -1031,6 +1054,7 @@ local function tryChargeShotCost(player: Player)
 	end
 	lastShotCostAtByUserId[player.UserId] = now
 	Money.subtractCash(player, SHOT_COST_AMOUNT)
+	MatchRoundBridge.recordCoinSpent(player, SHOT_COST_AMOUNT)
 end
 
 hitFlashRemote.OnServerEvent:Connect(function(player, hitInstance)
@@ -1054,6 +1078,9 @@ hitFlashRemote.OnServerEvent:Connect(function(player, hitInstance)
 	end
 
 	if player then
+		if not MatchRoundBridge.allowShooting(player) then
+			return
+		end
 		tryChargeShotCost(player)
 	end
 
@@ -1064,9 +1091,16 @@ end)
 local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
 ConveyorAntiAirBridge.setProjectileConveyorHitHandler(function(model: Model, projectile: BasePart, shooter: Player?)
 	if shooter then
+		if not MatchRoundBridge.allowShooting(shooter) then
+			return
+		end
 		tryChargeShotCost(shooter)
 	end
 	onConveyorAntiAirHit(model, shooter, projectile)
 end)
+
+MatchRoundBridge.setCallbacks({
+	clearFishNow = clearAllConveyorFish,
+})
 
 task.spawn(runConveyorSystem)

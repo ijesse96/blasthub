@@ -8,6 +8,7 @@ local RunService = game:GetService("RunService")
 
 local Ricochet = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirRicochetProjectile") :: ModuleScript)
 local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
+local MatchRoundBridge = require(script.Parent:WaitForChild("MatchRoundBridge"))
 
 local FIRE_REMOTE_NAME = "AntiAirPlayerFire"
 local BULLET_SPEED = 600
@@ -87,6 +88,10 @@ local function attachBulletTag(projectile: BasePart, sourcePart: BasePart)
 end
 
 local function fireForPlayer(player: Player, clientSpawnPos: Vector3?, clientAimUnit: Vector3?, clientPredictSeq: number?)
+	if not MatchRoundBridge.allowShooting(player) then
+		return
+	end
+
 	local turret = getPlayerTurretModel(player)
 	if not turret then
 		return
