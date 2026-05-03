@@ -28,6 +28,7 @@ local CONTINUE_RESPONSE_EVENT_NAME = "ContinueResponse"
 type TeleportData = {
 	kind: string?,
 	mapId: string?,
+	source: string?,
 }
 
 local phase = "Idle"
@@ -38,6 +39,8 @@ local lastLiveRoundBroadcastAt = 0
 local pendingParticipants: { [number]: true } = {}
 local activeRoundParticipants: { [number]: true } = {}
 local skipOneContinueForUserId: { [number]: true } = {}
+-- Friend / non-lobby joins during ActiveRound: pay at continue to join next round (not skipOneContinue).
+local midRoundSpectatorContinueByUserId: { [number]: true } = {}
 local continueChoiceByUserId: { [number]: boolean } = {}
 local continueEligibleByUserId: { [number]: true } = {}
 local coinsWonByUserId: { [number]: number } = {}
@@ -94,12 +97,17 @@ local function parseTeleportData(player: Player): TeleportData
 		return {
 			kind = if typeof(data.kind) == "string" then data.kind else nil,
 			mapId = if typeof(data.mapId) == "string" then data.mapId else nil,
+			source = if typeof(data.source) == "string" then data.source else nil,
 		}
 	end
 	if typeof(raw) == "string" and raw == "from_lobby" then
-		return { kind = "match", mapId = "main" }
+		return { kind = "match", mapId = "main", source = "lobby" }
 	end
 	return {}
+end
+
+local function isLobbyPaidTeleport(data: TeleportData): boolean
+	return data.source == "lobby"
 end
 
 local function isMatchJoin(player: Player): (boolean, string?)
@@ -298,6 +306,10 @@ local function resolveContinuePhase(mapId: string)
 		for userId in activeRoundParticipants do
 			pendingParticipants[userId] = true
 		end
+		for userId in midRoundSpectatorContinueByUserId do
+			pendingParticipants[userId] = true
+		end
+		table.clear(midRoundSpectatorContinueByUserId)
 		return
 	end
 
@@ -317,6 +329,25 @@ local function resolveContinuePhase(mapId: string)
 				entryFee = map.entryFee,
 				canAfford = cash.Value >= map.entryFee,
 				mapId = map.id,
+			})
+		end
+	end
+
+	for userId in midRoundSpectatorContinueByUserId do
+		if continueEligibleByUserId[userId] then
+			continue
+		end
+		local player = getPlayerByUserId(userId)
+		if player and player:IsDescendantOf(Players) then
+			continueEligibleByUserId[userId] = true
+			local cash = Money.setupPlayer(player)
+			continuePromptEvent:FireClient(player, {
+				visible = true,
+				seconds = CONTINUE_PROMPT_SECONDS,
+				entryFee = map.entryFee,
+				canAfford = cash.Value >= map.entryFee,
+				mapId = map.id,
+				promptReason = "join_next_round",
 			})
 		end
 	end
@@ -374,6 +405,8 @@ local function resolveContinuePhase(mapId: string)
 			skipOneContinueForUserId[userId] = nil
 		end
 	end
+
+	table.clear(midRoundSpectatorContinueByUserId)
 
 	teleportPlayersToLobby(toLobby)
 end
@@ -440,8 +473,13 @@ Players.PlayerAdded:Connect(function(player: Player)
 
 	currentMapId = mapId
 	if phase == "ActiveRound" then
-		-- Mid-round arrivals already paid lobby entry, so they skip one continue fee.
-		skipOneContinueForUserId[player.UserId] = true
+		local data = parseTeleportData(player)
+		if isLobbyPaidTeleport(data) then
+			-- Lobby portal fee already paid; skip exactly one continue debit to enter the next round.
+			skipOneContinueForUserId[player.UserId] = true
+		else
+			midRoundSpectatorContinueByUserId[player.UserId] = true
+		end
 	else
 		pendingParticipants[player.UserId] = true
 	end
@@ -487,6 +525,7 @@ Players.PlayerRemoving:Connect(function(player: Player)
 	pendingParticipants[userId] = nil
 	activeRoundParticipants[userId] = nil
 	skipOneContinueForUserId[userId] = nil
+	midRoundSpectatorContinueByUserId[userId] = nil
 	continueChoiceByUserId[userId] = nil
 	continueEligibleByUserId[userId] = nil
 end)

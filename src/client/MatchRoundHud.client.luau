@@ -22,9 +22,9 @@ screenGui.IgnoreGuiInset = true
 screenGui.DisplayOrder = 90
 screenGui.Parent = playerGui
 
--- Top-center round timer tab (`timerTabLabel` updated in RenderStepped).
+-- Top-center round timer tab (`timerTabSubtitle` + `timerTabClock` updated in RenderStepped).
 local TIMER_TAB_SIZE_COMPACT = UDim2.fromOffset(112, 36)
-local TIMER_TAB_SIZE_INTERMISSION = UDim2.fromOffset(140, 50)
+local TIMER_TAB_SIZE_INTERMISSION = UDim2.fromOffset(148, 56)
 
 local roundTimerTab = Instance.new("Frame")
 roundTimerTab.Name = "RoundTimerTab"
@@ -54,20 +54,45 @@ timerTabPadding.PaddingLeft = UDim.new(0, 8)
 timerTabPadding.PaddingRight = UDim.new(0, 8)
 timerTabPadding.Parent = roundTimerTab
 
-local timerTabLabel = Instance.new("TextLabel")
-timerTabLabel.Name = "Time"
-timerTabLabel.BackgroundTransparency = 1
-timerTabLabel.Position = UDim2.fromOffset(0, 0)
-timerTabLabel.Size = UDim2.fromScale(1, 1)
-timerTabLabel.Font = Enum.Font.GothamBold
-timerTabLabel.TextSize = 20
-timerTabLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
-timerTabLabel.TextXAlignment = Enum.TextXAlignment.Center
-timerTabLabel.TextYAlignment = Enum.TextYAlignment.Center
-timerTabLabel.TextWrapped = true
-timerTabLabel.LineHeight = 1.1
-timerTabLabel.Text = "--"
-timerTabLabel.Parent = roundTimerTab
+local timerTabListLayout = Instance.new("UIListLayout")
+timerTabListLayout.Name = "TimerList"
+timerTabListLayout.FillDirection = Enum.FillDirection.Vertical
+timerTabListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+timerTabListLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+timerTabListLayout.Padding = UDim.new(0, 3)
+timerTabListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+timerTabListLayout.Parent = roundTimerTab
+
+local timerTabSubtitle = Instance.new("TextLabel")
+timerTabSubtitle.Name = "TimerSubtitle"
+timerTabSubtitle.LayoutOrder = 1
+timerTabSubtitle.BackgroundTransparency = 1
+timerTabSubtitle.Size = UDim2.new(1, 0, 0, 0)
+timerTabSubtitle.AutomaticSize = Enum.AutomaticSize.Y
+timerTabSubtitle.Font = Enum.Font.GothamBold
+timerTabSubtitle.TextSize = 13
+timerTabSubtitle.TextColor3 = Color3.fromRGB(190, 200, 230)
+timerTabSubtitle.TextXAlignment = Enum.TextXAlignment.Center
+timerTabSubtitle.TextYAlignment = Enum.TextYAlignment.Center
+timerTabSubtitle.TextWrapped = true
+timerTabSubtitle.Text = ""
+timerTabSubtitle.Visible = false
+timerTabSubtitle.Parent = roundTimerTab
+
+local timerTabClock = Instance.new("TextLabel")
+timerTabClock.Name = "TimerClock"
+timerTabClock.LayoutOrder = 2
+timerTabClock.BackgroundTransparency = 1
+timerTabClock.Size = UDim2.new(1, 0, 1, 0)
+timerTabClock.AutomaticSize = Enum.AutomaticSize.None
+timerTabClock.Font = Enum.Font.GothamBold
+timerTabClock.TextSize = 20
+timerTabClock.TextColor3 = Color3.fromRGB(220, 230, 255)
+timerTabClock.TextXAlignment = Enum.TextXAlignment.Center
+timerTabClock.TextYAlignment = Enum.TextYAlignment.Center
+timerTabClock.TextWrapped = false
+timerTabClock.Text = "--"
+timerTabClock.Parent = roundTimerTab
 
 local continueFrame = Instance.new("Frame")
 continueFrame.Name = "ContinuePrompt"
@@ -296,6 +321,23 @@ local roundEndServerTime = 0
 local promptEndServerTime = 0
 local promptEntryFee = 0
 local promptCanAfford = false
+local promptJoinNextRound = false
+
+local function isLocalPlayerInRoundLeaderboard(payload: { [string]: any }?): boolean
+	if typeof(payload) ~= "table" then
+		return false
+	end
+	local lb = payload.leaderboard
+	if typeof(lb) ~= "table" then
+		return false
+	end
+	for _, row in lb do
+		if typeof(row) == "table" and row.userId == player.UserId then
+			return true
+		end
+	end
+	return false
+end
 
 local function formatSeconds(secondsLeft: number): string
 	local clamped = math.max(0, math.ceil(secondsLeft))
@@ -450,6 +492,7 @@ continuePromptEvent.OnClientEvent:Connect(function(payload)
 	if payload.visible ~= true then
 		continueFrame.Visible = false
 		promptEndServerTime = 0
+		promptJoinNextRound = false
 		return
 	end
 
@@ -458,9 +501,18 @@ continuePromptEvent.OnClientEvent:Connect(function(payload)
 	promptEndServerTime = now + seconds
 	promptEntryFee = if typeof(payload.entryFee) == "number" then payload.entryFee else 0
 	promptCanAfford = payload.canAfford == true
+	promptJoinNextRound = payload.promptReason == "join_next_round"
 
 	continueFrame.Visible = true
-	continueLabel.Text = string.format("Continue for $%d? (%ds)", promptEntryFee, math.max(0, math.ceil(seconds)))
+	if promptJoinNextRound then
+		continueLabel.Text = string.format(
+			"Pay $%d to join the next round? (%ds)",
+			promptEntryFee,
+			math.max(0, math.ceil(seconds))
+		)
+	else
+		continueLabel.Text = string.format("Continue for $%d? (%ds)", promptEntryFee, math.max(0, math.ceil(seconds)))
+	end
 	updatePromptVisual()
 end)
 
@@ -480,23 +532,42 @@ end)
 RunService.RenderStepped:Connect(function()
 	local now = Workspace:GetServerTimeNow()
 	local timeSegment = if roundEndServerTime > 0 then formatSeconds(roundEndServerTime - now) else "--"
-	if phaseValue == "Intermission" then
+	timerTabClock.Text = timeSegment
+
+	local dualLine = phaseValue == "Intermission"
+		or (phaseValue == "ActiveRound" and not isLocalPlayerInRoundLeaderboard(lastProfitBoardPayload))
+
+	if dualLine then
 		roundTimerTab.Size = TIMER_TAB_SIZE_INTERMISSION
-		timerTabLabel.TextYAlignment = Enum.TextYAlignment.Top
-		timerTabLabel.TextSize = 15
-		timerTabLabel.Text = "Match begins\n" .. timeSegment
+		timerTabListLayout.VerticalAlignment = Enum.VerticalAlignment.Top
+		timerTabSubtitle.Visible = true
+		timerTabSubtitle.TextSize = 13
+		timerTabSubtitle.Text = if phaseValue == "Intermission" then "Match begins" else "Wait for next round"
+		timerTabClock.TextSize = 18
+		timerTabClock.AutomaticSize = Enum.AutomaticSize.Y
+		timerTabClock.Size = UDim2.new(1, 0, 0, 0)
+		timerTabClock.TextYAlignment = Enum.TextYAlignment.Center
 	else
 		roundTimerTab.Size = TIMER_TAB_SIZE_COMPACT
-		timerTabLabel.TextYAlignment = Enum.TextYAlignment.Center
-		timerTabLabel.TextSize = 20
-		timerTabLabel.Text = timeSegment
+		timerTabListLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+		timerTabSubtitle.Visible = false
+		timerTabSubtitle.Text = ""
+		timerTabClock.TextSize = 20
+		timerTabClock.AutomaticSize = Enum.AutomaticSize.None
+		timerTabClock.Size = UDim2.new(1, 0, 1, 0)
+		timerTabClock.TextYAlignment = Enum.TextYAlignment.Center
 	end
 
 	if continueFrame.Visible and promptEndServerTime > 0 then
 		local secondsLeft = math.max(0, math.ceil(promptEndServerTime - now))
-		continueLabel.Text = string.format("Continue for $%d? (%ds)", promptEntryFee, secondsLeft)
+		if promptJoinNextRound then
+			continueLabel.Text = string.format("Pay $%d to join the next round? (%ds)", promptEntryFee, secondsLeft)
+		else
+			continueLabel.Text = string.format("Continue for $%d? (%ds)", promptEntryFee, secondsLeft)
+		end
 		if secondsLeft <= 0 then
 			continueFrame.Visible = false
+			promptJoinNextRound = false
 		end
 	end
 end)

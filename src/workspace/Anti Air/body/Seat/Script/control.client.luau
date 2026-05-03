@@ -57,6 +57,49 @@ if not fireRemote or not fireRemote:IsA("RemoteEvent") then
 	warn("[AntiAirFlashClient] Missing RemoteEvent", FIRE_REMOTE_NAME, "- turret client disabled")
 	return
 end
+
+local MATCH_ROUND_REMOTES_NAME = "MatchRoundRemotes"
+local MATCH_ROUND_STATE_NAME = "RoundState"
+local matchRoundPhase = "Idle"
+local matchRoundLeaderboard: { any } = {}
+local matchRoundStateConn: RBXScriptConnection? = nil
+local matchRoundFolder = replicatedStorage:FindFirstChild(MATCH_ROUND_REMOTES_NAME)
+if not matchRoundFolder then
+	matchRoundFolder = replicatedStorage:WaitForChild(MATCH_ROUND_REMOTES_NAME, 20)
+end
+if matchRoundFolder and matchRoundFolder:IsA("Folder") then
+	local roundStateEv = matchRoundFolder:WaitForChild(MATCH_ROUND_STATE_NAME, 20)
+	if roundStateEv and roundStateEv:IsA("RemoteEvent") then
+		matchRoundStateConn = roundStateEv.OnClientEvent:Connect(function(payload: any)
+			if typeof(payload) ~= "table" then
+				return
+			end
+			if typeof(payload.phase) == "string" then
+				matchRoundPhase = payload.phase
+			end
+			if typeof(payload.leaderboard) == "table" then
+				matchRoundLeaderboard = payload.leaderboard
+			end
+		end)
+	end
+end
+
+local function localPlayerIsMatchRoundLeaderboardParticipant(): boolean
+	for _, row in matchRoundLeaderboard do
+		if typeof(row) == "table" and row.userId == player.UserId then
+			return true
+		end
+	end
+	return false
+end
+
+local function canShootByMatchRoundState(): boolean
+	if matchRoundStateConn == nil then
+		return true
+	end
+	return matchRoundPhase == "ActiveRound" and localPlayerIsMatchRoundLeaderboardParticipant()
+end
+
 local Ricochet = require(replicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirRicochetProjectile") :: ModuleScript)
 
 local BULLET_SPEED = 600
@@ -263,6 +306,9 @@ local function fireOnce()
 	if not shootHeld then
 		return
 	end
+	if not canShootByMatchRoundState() then
+		return
+	end
 
 	-- Aim is applied locally only; server must use our barrel pose (spawn + look) for the replicated projectile.
 	local gunPart = gun.gun.gunpart
@@ -363,6 +409,10 @@ local function cleanup()
 	if predictReconcileConn then
 		predictReconcileConn:Disconnect()
 		predictReconcileConn = nil
+	end
+	if matchRoundStateConn then
+		matchRoundStateConn:Disconnect()
+		matchRoundStateConn = nil
 	end
 	clearAllPredictions()
 	if skyViewAttrConn then
