@@ -9,6 +9,7 @@ local CONTINUE_RESPONSE_EVENT_NAME = "ContinueResponse"
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+local Workspace = game:GetService("Workspace")
 local remotesFolder = ReplicatedStorage:WaitForChild(REMOTES_FOLDER_NAME)
 local roundStateEvent = remotesFolder:WaitForChild(STATE_EVENT_NAME) :: RemoteEvent
 local continuePromptEvent = remotesFolder:WaitForChild(CONTINUE_PROMPT_EVENT_NAME) :: RemoteEvent
@@ -21,60 +22,52 @@ screenGui.IgnoreGuiInset = true
 screenGui.DisplayOrder = 90
 screenGui.Parent = playerGui
 
-local panel = Instance.new("Frame")
-panel.Name = "RoundPanel"
-panel.AnchorPoint = Vector2.new(0.5, 0)
-panel.Position = UDim2.new(0.5, 0, 0, 14)
-panel.Size = UDim2.fromOffset(420, 150)
-panel.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
-panel.BackgroundTransparency = 0.2
-panel.Parent = screenGui
+-- Top-center round timer tab (`timerTabLabel` updated in RenderStepped).
+local TIMER_TAB_SIZE_COMPACT = UDim2.fromOffset(112, 36)
+local TIMER_TAB_SIZE_INTERMISSION = UDim2.fromOffset(140, 50)
 
-local phaseLabel = Instance.new("TextLabel")
-phaseLabel.BackgroundTransparency = 1
-phaseLabel.Position = UDim2.fromOffset(12, 8)
-phaseLabel.Size = UDim2.fromOffset(396, 26)
-phaseLabel.Font = Enum.Font.GothamBold
-phaseLabel.TextSize = 22
-phaseLabel.TextColor3 = Color3.fromRGB(240, 245, 255)
-phaseLabel.TextXAlignment = Enum.TextXAlignment.Left
-phaseLabel.Text = "Phase: Idle"
-phaseLabel.Parent = panel
+local roundTimerTab = Instance.new("Frame")
+roundTimerTab.Name = "RoundTimerTab"
+roundTimerTab.AnchorPoint = Vector2.new(0.5, 0)
+roundTimerTab.Position = UDim2.new(0.5, 0, 0, 6)
+roundTimerTab.Size = TIMER_TAB_SIZE_COMPACT
+roundTimerTab.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
+roundTimerTab.BackgroundTransparency = 0.12
+roundTimerTab.BorderSizePixel = 0
+roundTimerTab.ZIndex = 1
+roundTimerTab.Parent = screenGui
 
-local timerLabel = Instance.new("TextLabel")
-timerLabel.BackgroundTransparency = 1
-timerLabel.Position = UDim2.fromOffset(12, 36)
-timerLabel.Size = UDim2.fromOffset(396, 22)
-timerLabel.Font = Enum.Font.Gotham
-timerLabel.TextSize = 18
-timerLabel.TextColor3 = Color3.fromRGB(210, 220, 245)
-timerLabel.TextXAlignment = Enum.TextXAlignment.Left
-timerLabel.Text = "Timer: --"
-timerLabel.Parent = panel
+local timerTabCorner = Instance.new("UICorner")
+timerTabCorner.CornerRadius = UDim.new(0, 8)
+timerTabCorner.Parent = roundTimerTab
 
-local profitLabel = Instance.new("TextLabel")
-profitLabel.BackgroundTransparency = 1
-profitLabel.Position = UDim2.fromOffset(12, 58)
-profitLabel.Size = UDim2.fromOffset(396, 22)
-profitLabel.Font = Enum.Font.Gotham
-profitLabel.TextSize = 18
-profitLabel.TextColor3 = Color3.fromRGB(120, 230, 150)
-profitLabel.TextXAlignment = Enum.TextXAlignment.Left
-profitLabel.Text = "Net Profit: $0"
-profitLabel.Parent = panel
+local timerTabStroke = Instance.new("UIStroke")
+timerTabStroke.Color = Color3.fromRGB(90, 100, 130)
+timerTabStroke.Transparency = 0.45
+timerTabStroke.Thickness = 1
+timerTabStroke.Parent = roundTimerTab
 
-local leaderboardLabel = Instance.new("TextLabel")
-leaderboardLabel.BackgroundTransparency = 1
-leaderboardLabel.Position = UDim2.fromOffset(12, 82)
-leaderboardLabel.Size = UDim2.fromOffset(396, 60)
-leaderboardLabel.Font = Enum.Font.Gotham
-leaderboardLabel.TextSize = 16
-leaderboardLabel.TextColor3 = Color3.fromRGB(230, 230, 240)
-leaderboardLabel.TextXAlignment = Enum.TextXAlignment.Left
-leaderboardLabel.TextYAlignment = Enum.TextYAlignment.Top
-leaderboardLabel.TextWrapped = true
-leaderboardLabel.Text = "Leaderboard: waiting..."
-leaderboardLabel.Parent = panel
+local timerTabPadding = Instance.new("UIPadding")
+timerTabPadding.PaddingTop = UDim.new(0, 5)
+timerTabPadding.PaddingBottom = UDim.new(0, 5)
+timerTabPadding.PaddingLeft = UDim.new(0, 8)
+timerTabPadding.PaddingRight = UDim.new(0, 8)
+timerTabPadding.Parent = roundTimerTab
+
+local timerTabLabel = Instance.new("TextLabel")
+timerTabLabel.Name = "Time"
+timerTabLabel.BackgroundTransparency = 1
+timerTabLabel.Position = UDim2.fromOffset(0, 0)
+timerTabLabel.Size = UDim2.fromScale(1, 1)
+timerTabLabel.Font = Enum.Font.GothamBold
+timerTabLabel.TextSize = 20
+timerTabLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
+timerTabLabel.TextXAlignment = Enum.TextXAlignment.Center
+timerTabLabel.TextYAlignment = Enum.TextYAlignment.Center
+timerTabLabel.TextWrapped = true
+timerTabLabel.LineHeight = 1.1
+timerTabLabel.Text = "--"
+timerTabLabel.Parent = roundTimerTab
 
 local continueFrame = Instance.new("Frame")
 continueFrame.Name = "ContinuePrompt"
@@ -84,6 +77,7 @@ continueFrame.Size = UDim2.fromOffset(460, 130)
 continueFrame.BackgroundColor3 = Color3.fromRGB(18, 24, 20)
 continueFrame.BackgroundTransparency = 0.2
 continueFrame.Visible = false
+continueFrame.ZIndex = 2
 continueFrame.Parent = screenGui
 
 local continueLabel = Instance.new("TextLabel")
@@ -119,12 +113,189 @@ noButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 noButton.Text = "No"
 noButton.Parent = continueFrame
 
+local PROFIT_BILLBOARD_NAME = "MatchRoundHudProfitBillboard"
+local PROFIT_BILLBOARD_LABEL_NAME = "ProfitTextBillboard"
+-- World profit readout: no panel fill, vivid green; enlarge BillboardGui.Size in Studio or here.
+local PROFIT_TEXT_COLOR = Color3.fromRGB(72, 255, 140)
+local PROFIT_TEXT_STROKE = Color3.fromRGB(0, 28, 12)
+local PROFIT_BILLBOARD_SIZE = UDim2.fromOffset(110, 33)
+-- Float along the board part's top normal (world +Y is wrong if the board is rotated).
+local PROFIT_BILLBOARD_ABOVE_STUDS = 0.625
+-- If true on the profit root (Part/Model), keep SurfaceGui on for Studio layout; default is billboard-only (no double text).
+local MATCH_HUD_USE_SURFACE_GUI_ATTR = "MatchHudUseSurfaceGui"
+
+local lastProfitBoardPayload: { [string]: any }?
+local warnedMissingFloorBoard = false
+local warnedMissingProfitBoardSlot: { [number]: boolean } = {}
+local warnedMissingProfitBoardAdornee: { [number]: boolean } = {}
+local profitBoardRetryScheduled = false
+
+-- Matches Workspace > Floor Board children; order is first matching name per slot.
+local PROFIT_BOARD_SLOTS: { { candidateNames: { string }, turretIndex: number } } = {
+	{ candidateNames = { "Profit Board", "ProfitBoard" }, turretIndex = 1 },
+	{ candidateNames = { "Profit Board 2" }, turretIndex = 2 },
+	{ candidateNames = { "Profit Board 3" }, turretIndex = 3 },
+	{ candidateNames = { "Profit Board 4" }, turretIndex = 4 },
+}
+
+local function findProfitBoardUnderFloor(floorBoard: Instance, candidateNames: { string }): Instance?
+	for _, name in candidateNames do
+		local inst = floorBoard:FindFirstChild(name)
+		if inst and (inst:IsA("BasePart") or inst:IsA("Model")) then
+			return inst
+		end
+	end
+	return nil
+end
+
+local function getBillboardAdorneePart(root: Instance): BasePart?
+	if root:IsA("BasePart") then
+		return root
+	end
+	if root:IsA("Model") then
+		if root.PrimaryPart then
+			return root.PrimaryPart
+		end
+		for _, d in root:GetDescendants() do
+			if d:IsA("BasePart") then
+				return d
+			end
+		end
+	end
+	return nil
+end
+
+local function findSurfaceGuiUnderRoot(root: Instance): SurfaceGui?
+	return root:FindFirstChildWhichIsA("SurfaceGui", true)
+end
+
+local function pickSurfaceProfitTextLabel(surfaceGui: SurfaceGui): TextLabel?
+	local byName = surfaceGui:FindFirstChild("ProfitText", true)
+	if byName and byName:IsA("TextLabel") then
+		return byName
+	end
+
+	for _, ch in surfaceGui:GetChildren() do
+		if ch:IsA("TextLabel") then
+			return ch
+		end
+	end
+
+	for _, d in surfaceGui:GetDescendants() do
+		if d:IsA("TextLabel") then
+			local lower = string.lower(d.Name)
+			if string.find(lower, "profit", 1, true) then
+				return d
+			end
+		end
+	end
+
+	local singleLabel: TextLabel?
+	local textLabelCount = 0
+	for _, d in surfaceGui:GetDescendants() do
+		if d:IsA("TextLabel") then
+			textLabelCount += 1
+			singleLabel = d
+		end
+	end
+	if textLabelCount == 1 and singleLabel then
+		return singleLabel
+	end
+
+	return nil
+end
+
+local function setBillboardAbovePart(part: BasePart, bb: BillboardGui)
+	bb.StudsOffsetWorldSpace = part.CFrame.UpVector * PROFIT_BILLBOARD_ABOVE_STUDS
+end
+
+local function clearOpaqueAncestorsToSurfaceGui(textLabel: TextLabel, surfaceGui: SurfaceGui)
+	local p: Instance? = textLabel.Parent
+	while p and p ~= surfaceGui do
+		if p:IsA("Frame") or p:IsA("ScrollingFrame") or p:IsA("ImageLabel") or p:IsA("ImageButton") then
+			local go = p :: GuiObject
+			go.BackgroundTransparency = 1
+			go.BorderSizePixel = 0
+		end
+		p = p.Parent
+	end
+end
+
+local function ensureProfitBillboardLabel(part: BasePart): TextLabel
+	local existing = part:FindFirstChild(PROFIT_BILLBOARD_NAME)
+	if existing and existing:IsA("BillboardGui") then
+		existing.Size = PROFIT_BILLBOARD_SIZE
+		setBillboardAbovePart(part, existing)
+		local tl = existing:FindFirstChild(PROFIT_BILLBOARD_LABEL_NAME)
+		if tl and tl:IsA("TextLabel") then
+			tl.BackgroundTransparency = 1
+			tl.BorderSizePixel = 0
+			tl.TextColor3 = PROFIT_TEXT_COLOR
+			tl.TextStrokeColor3 = PROFIT_TEXT_STROKE
+			tl.TextStrokeTransparency = 0.2
+			return tl
+		end
+		local fallback = existing:FindFirstChildWhichIsA("TextLabel", true)
+		if fallback and fallback:IsA("TextLabel") then
+			return fallback
+		end
+		existing:Destroy()
+	end
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name = PROFIT_BILLBOARD_NAME
+	bb.Adornee = part
+	bb.AlwaysOnTop = true
+	bb.Size = PROFIT_BILLBOARD_SIZE
+	setBillboardAbovePart(part, bb)
+	bb.MaxDistance = 8000
+	bb.LightInfluence = 0
+	bb.Parent = part
+
+	local label = Instance.new("TextLabel")
+	label.Name = PROFIT_BILLBOARD_LABEL_NAME
+	label.BackgroundTransparency = 1
+	label.BorderSizePixel = 0
+	label.Size = UDim2.fromScale(1, 1)
+	label.Font = Enum.Font.GothamBlack
+	label.TextScaled = true
+	label.TextColor3 = PROFIT_TEXT_COLOR
+	label.TextStrokeTransparency = 0.2
+	label.TextStrokeColor3 = PROFIT_TEXT_STROKE
+		label.Text = "Empty\n$0"
+	label.Parent = bb
+
+	return label
+end
+
+local function styleProfitBoard(label: TextLabel, surfaceGui: SurfaceGui)
+	surfaceGui.Enabled = true
+	surfaceGui.Face = Enum.NormalId.Top
+	surfaceGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	surfaceGui.PixelsPerStud = 5
+	surfaceGui.AlwaysOnTop = true
+	surfaceGui.LightInfluence = 0
+
+	label.BackgroundTransparency = 1
+	label.BorderSizePixel = 0
+	label.TextTransparency = 0
+	label.TextScaled = false
+	label.TextSize = 15
+	label.TextColor3 = PROFIT_TEXT_COLOR
+	label.TextStrokeColor3 = PROFIT_TEXT_STROKE
+	label.TextStrokeTransparency = 0.2
+	label.Font = Enum.Font.GothamBlack
+	label.TextXAlignment = Enum.TextXAlignment.Center
+	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.TextWrapped = true
+	label.Size = UDim2.fromScale(1, 1)
+end
+
 local phaseValue = "Idle"
 local roundEndServerTime = 0
 local promptEndServerTime = 0
 local promptEntryFee = 0
 local promptCanAfford = false
-local currentLeaderboard: { [number]: { userId: number, name: string, netProfit: number } } = {}
 
 local function formatSeconds(secondsLeft: number): string
 	local clamped = math.max(0, math.ceil(secondsLeft))
@@ -140,19 +311,123 @@ local function updatePromptVisual()
 	yesButton.Text = if promptCanAfford then "Yes" else "Need More Cash"
 end
 
-local function updateLeaderboardLabel()
-	if #currentLeaderboard == 0 then
-		leaderboardLabel.Text = "Leaderboard: waiting..."
+local function updateOneProfitBoard(root: Instance, turretIndex: number, payload: { [string]: any })
+	local adornee = getBillboardAdorneePart(root)
+	if not adornee then
+		if not warnedMissingProfitBoardAdornee[turretIndex] then
+			warnedMissingProfitBoardAdornee[turretIndex] = true
+			warn(
+				string.format(
+					"[MatchRoundHud] T%d profit board Model has no BasePart (set Model.PrimaryPart or add a Part).",
+					turretIndex
+				)
+			)
+		end
 		return
 	end
 
-	local lines = {}
-	for i = 1, math.min(4, #currentLeaderboard) do
-		local row = currentLeaderboard[i]
-		table.insert(lines, string.format("%d) %s   $%d", i, row.name, row.netProfit))
+	local text = "Empty\n$0"
+	local turretBoards = payload.turretBoards
+	if typeof(turretBoards) == "table" then
+		for _, row in turretBoards do
+			if typeof(row) == "table" and row.turretIndex == turretIndex then
+				local rowName = if typeof(row.name) == "string" then row.name else "Empty"
+				local rowProfit = if typeof(row.netProfit) == "number" then row.netProfit else 0
+				text = string.format("%s\n$%d", rowName, rowProfit)
+				break
+			end
+		end
 	end
-	leaderboardLabel.Text = "Leaderboard:\n" .. table.concat(lines, "\n")
+
+	local billboardLabel = ensureProfitBillboardLabel(adornee)
+	billboardLabel.Text = text
+	-- T2/T3: 180° UI flip. T1/T4 use 0°.
+	billboardLabel.Rotation = if turretIndex == 2 or turretIndex == 3 then 180 else 0
+	local bbGui = adornee:FindFirstChild(PROFIT_BILLBOARD_NAME)
+	if bbGui and bbGui:IsA("BillboardGui") then
+		setBillboardAbovePart(adornee, bbGui)
+	end
+
+	local surfaceGui = findSurfaceGuiUnderRoot(root)
+	if surfaceGui then
+		local useSurfaceLayout = root:GetAttribute(MATCH_HUD_USE_SURFACE_GUI_ATTR) == true
+		if useSurfaceLayout then
+			surfaceGui.Enabled = true
+			local surfaceLabel = pickSurfaceProfitTextLabel(surfaceGui)
+			if surfaceLabel then
+				clearOpaqueAncestorsToSurfaceGui(surfaceLabel, surfaceGui)
+				styleProfitBoard(surfaceLabel, surfaceGui)
+				surfaceLabel.Text = text
+				surfaceLabel.Rotation = if turretIndex == 2 or turretIndex == 3 then 180 else 0
+			end
+		else
+			surfaceGui.Enabled = false
+		end
+	end
 end
+
+local function updateProfitBoardText(payload)
+	if typeof(payload) ~= "table" then
+		return
+	end
+
+	local floorBoard = Workspace:FindFirstChild("Floor Board")
+	if not floorBoard then
+		if not warnedMissingFloorBoard then
+			warnedMissingFloorBoard = true
+			warn(
+				'[MatchRoundHud] Workspace["Floor Board"] not found. Profit boards must live under Floor Board. '
+					.. "Names are case-sensitive; if StreamingEnabled, wait until it streams in."
+			)
+		end
+		return
+	end
+
+	for slotIndex, slot in PROFIT_BOARD_SLOTS do
+		local root = findProfitBoardUnderFloor(floorBoard, slot.candidateNames)
+		if not root then
+			if not warnedMissingProfitBoardSlot[slotIndex] then
+				warnedMissingProfitBoardSlot[slotIndex] = true
+				warn(
+					string.format(
+						'[MatchRoundHud] T%d profit board not found under Floor Board. Expected one of: %s',
+						slot.turretIndex,
+						table.concat(slot.candidateNames, ", ")
+					)
+				)
+			end
+			continue
+		end
+		updateOneProfitBoard(root, slot.turretIndex, payload)
+	end
+end
+
+local function scheduleProfitBoardRetry()
+	if profitBoardRetryScheduled or not lastProfitBoardPayload then
+		return
+	end
+	profitBoardRetryScheduled = true
+	task.defer(function()
+		profitBoardRetryScheduled = false
+		if lastProfitBoardPayload then
+			updateProfitBoardText(lastProfitBoardPayload)
+		end
+	end)
+end
+
+Workspace.DescendantAdded:Connect(function(inst: Instance)
+	local n = inst.Name
+	if
+		n == "Floor Board"
+		or n == "Profit Board"
+		or n == "ProfitBoard"
+		or n == "Profit Board 2"
+		or n == "Profit Board 3"
+		or n == "Profit Board 4"
+	then
+		scheduleProfitBoardRetry()
+	end
+end)
 
 roundStateEvent.OnClientEvent:Connect(function(payload)
 	if typeof(payload) ~= "table" then
@@ -160,27 +435,12 @@ roundStateEvent.OnClientEvent:Connect(function(payload)
 	end
 	if typeof(payload.phase) == "string" then
 		phaseValue = payload.phase
-		phaseLabel.Text = "Phase: " .. phaseValue
 	end
 	if typeof(payload.roundEndServerTime) == "number" then
 		roundEndServerTime = payload.roundEndServerTime
 	end
-	if typeof(payload.leaderboard) == "table" then
-		currentLeaderboard = payload.leaderboard
-		updateLeaderboardLabel()
-
-		local localNet = 0
-		for _, row in currentLeaderboard do
-			if typeof(row) == "table" and row.userId == player.UserId then
-				localNet = if typeof(row.netProfit) == "number" then row.netProfit else 0
-				break
-			end
-		end
-		profitLabel.Text = string.format("Net Profit: $%d", localNet)
-	end
-	if typeof(payload.winnerName) == "string" and payload.winnerName ~= "" and typeof(payload.bonusAmount) == "number" then
-		leaderboardLabel.Text = string.format("Winner: %s (+$%d bonus)", payload.winnerName, payload.bonusAmount)
-	end
+	lastProfitBoardPayload = payload
+	updateProfitBoardText(payload)
 end)
 
 continuePromptEvent.OnClientEvent:Connect(function(payload)
@@ -219,10 +479,17 @@ end)
 
 RunService.RenderStepped:Connect(function()
 	local now = Workspace:GetServerTimeNow()
-	if roundEndServerTime > 0 then
-		timerLabel.Text = "Timer: " .. formatSeconds(roundEndServerTime - now)
+	local timeSegment = if roundEndServerTime > 0 then formatSeconds(roundEndServerTime - now) else "--"
+	if phaseValue == "Intermission" then
+		roundTimerTab.Size = TIMER_TAB_SIZE_INTERMISSION
+		timerTabLabel.TextYAlignment = Enum.TextYAlignment.Top
+		timerTabLabel.TextSize = 15
+		timerTabLabel.Text = "Match begins\n" .. timeSegment
 	else
-		timerLabel.Text = "Timer: --"
+		roundTimerTab.Size = TIMER_TAB_SIZE_COMPACT
+		timerTabLabel.TextYAlignment = Enum.TextYAlignment.Center
+		timerTabLabel.TextSize = 20
+		timerTabLabel.Text = timeSegment
 	end
 
 	if continueFrame.Visible and promptEndServerTime > 0 then

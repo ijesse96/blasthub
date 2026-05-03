@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local TeleportService = game:GetService("TeleportService")
 local Workspace = game:GetService("Workspace")
 
@@ -14,6 +15,10 @@ local ROUND_SECONDS = 120
 local CONTINUE_PROMPT_SECONDS = 10
 local MIN_HUMANS_FOR_FIRST_PLACE_BONUS = 2
 local MIN_CONTINUE_YES_TO_START_NEXT_ROUND = 2
+local STUDIO_SOLO_TEST_OVERRIDE = true
+
+local IS_STUDIO = RunService:IsStudio()
+local SOLO_TEST_ENABLED = IS_STUDIO and STUDIO_SOLO_TEST_OVERRIDE
 
 local REMOTES_FOLDER_NAME = "MatchRoundRemotes"
 local STATE_EVENT_NAME = "RoundState"
@@ -40,6 +45,13 @@ local coinsSpentByUserId: { [number]: number } = {}
 
 type LeaderboardRow = {
 	userId: number,
+	name: string,
+	netProfit: number,
+}
+
+type TurretBoardRow = {
+	turretIndex: number,
+	userId: number?,
 	name: string,
 	netProfit: number,
 }
@@ -95,21 +107,10 @@ local function isMatchJoin(player: Player): (boolean, string?)
 	if data.kind == "match" and data.mapId and MatchMaps.getMapById(data.mapId) then
 		return true, data.mapId
 	end
-	return false, nil
-end
-
-local function broadcastState(extra: { [string]: any }?)
-	local payload = {
-		phase = phase,
-		mapId = currentMapId,
-		roundEndServerTime = currentRoundEndServerTime,
-	}
-	if extra then
-		for key, value in extra do
-			payload[key] = value
-		end
+	if SOLO_TEST_ENABLED then
+		return true, "main"
 	end
-	stateEvent:FireAllClients(payload)
+	return false, nil
 end
 
 local function getPlayerByUserId(userId: number): Player?
@@ -168,6 +169,75 @@ local function buildLeaderboardRows(): { LeaderboardRow }
 	return rows
 end
 
+local function getTurretSeatModelByIndex(targetIndex: number): Model?
+	for _, inst in Workspace:GetDescendants() do
+		if inst:IsA("Model") and inst:GetAttribute("TurretIndex") == targetIndex then
+			return inst
+		end
+	end
+	return nil
+end
+
+local function getSeatedPlayerForTurretIndex(targetIndex: number): Player?
+	local turretModel = getTurretSeatModelByIndex(targetIndex)
+	if not turretModel then
+		return nil
+	end
+
+	local seatInst = turretModel:FindFirstChild("Seat", true)
+	if not seatInst or (not seatInst:IsA("Seat") and not seatInst:IsA("VehicleSeat")) then
+		return nil
+	end
+
+	local occupant = (seatInst :: BasePart).Occupant
+	if not occupant then
+		return nil
+	end
+
+	return Players:GetPlayerFromCharacter(occupant.Parent)
+end
+
+local function buildTurretBoardRows(): { TurretBoardRow }
+	local rows: { TurretBoardRow } = {}
+
+	for _, turretIndex in { 1, 2, 3, 4 } do
+		local seatedPlayer = getSeatedPlayerForTurretIndex(turretIndex)
+		if seatedPlayer and activeRoundParticipants[seatedPlayer.UserId] == true then
+			table.insert(rows, {
+				turretIndex = turretIndex,
+				userId = seatedPlayer.UserId,
+				name = seatedPlayer.Name,
+				netProfit = getNetProfitForUserId(seatedPlayer.UserId),
+			})
+		else
+			table.insert(rows, {
+				turretIndex = turretIndex,
+				userId = nil,
+				name = "Empty",
+				netProfit = 0,
+			})
+		end
+	end
+
+	return rows
+end
+
+local function broadcastState(extra: { [string]: any }?)
+	local payload = {
+		phase = phase,
+		mapId = currentMapId,
+		roundEndServerTime = currentRoundEndServerTime,
+	}
+	if extra then
+		for key, value in extra do
+			payload[key] = value
+		end
+	end
+	-- Idle/minimal broadcasts used to omit this; floor UI then never updated.
+	payload.turretBoards = buildTurretBoardRows()
+	stateEvent:FireAllClients(payload)
+end
+
 local function maybeBroadcastActiveRoundState()
 	if phase ~= "ActiveRound" then
 		return
@@ -181,6 +251,7 @@ local function maybeBroadcastActiveRoundState()
 		seconds = math.max(0, currentRoundEndServerTime - Workspace:GetServerTimeNow()),
 		participantCount = countSet(activeRoundParticipants),
 		leaderboard = buildLeaderboardRows(),
+		turretBoards = buildTurretBoardRows(),
 	})
 end
 
@@ -190,6 +261,7 @@ local function startIntermission()
 	broadcastState({
 		seconds = INTERMISSION_SECONDS,
 		leaderboard = {},
+		turretBoards = buildTurretBoardRows(),
 	})
 	task.wait(INTERMISSION_SECONDS)
 end
@@ -211,6 +283,7 @@ local function startActiveRound()
 		seconds = ROUND_SECONDS,
 		participantCount = countSet(activeRoundParticipants),
 		leaderboard = buildLeaderboardRows(),
+		turretBoards = buildTurretBoardRows(),
 	})
 	task.wait(ROUND_SECONDS)
 end
@@ -218,6 +291,13 @@ end
 local function resolveContinuePhase(mapId: string)
 	local map = MatchMaps.getMapById(mapId)
 	if not map then
+		return
+	end
+
+	if SOLO_TEST_ENABLED then
+		for userId in activeRoundParticipants do
+			pendingParticipants[userId] = true
+		end
 		return
 	end
 
@@ -243,6 +323,7 @@ local function resolveContinuePhase(mapId: string)
 
 	broadcastState({
 		seconds = CONTINUE_PROMPT_SECONDS,
+		turretBoards = buildTurretBoardRows(),
 	})
 
 	task.wait(CONTINUE_PROMPT_SECONDS)
@@ -304,7 +385,8 @@ local function finishRound(mapId: string)
 	MatchRoundBridge.clearFishNow()
 
 	local scoredHumanCount = countSet(activeRoundParticipants)
-	local bonusEligible = scoredHumanCount >= MIN_HUMANS_FOR_FIRST_PLACE_BONUS
+	local minForBonus = if SOLO_TEST_ENABLED then 1 else MIN_HUMANS_FOR_FIRST_PLACE_BONUS
+	local bonusEligible = scoredHumanCount >= minForBonus
 	local leaderboard = buildLeaderboardRows()
 	local winnerName: string? = nil
 	local winnerUserId: number? = nil
@@ -330,6 +412,7 @@ local function finishRound(mapId: string)
 		bonusEligible = bonusEligible,
 		scoredHumanCount = scoredHumanCount,
 		leaderboard = leaderboard,
+		turretBoards = buildTurretBoardRows(),
 		winnerName = winnerName,
 		winnerUserId = winnerUserId,
 		winnerNetProfit = winnerNetProfit,
