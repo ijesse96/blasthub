@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
 
 local REMOTES_FOLDER_NAME = "MatchRoundRemotes"
 local STATE_EVENT_NAME = "RoundState"
@@ -323,6 +324,45 @@ local promptEntryFee = 0
 local promptCanAfford = false
 local promptJoinNextRound = false
 
+-- Block Roblox menu "Reset Character" during any non-Idle match phase (avoids breaking auto-seat).
+local menuResetSink = Instance.new("BindableEvent")
+menuResetSink.Event:Connect(function() end)
+local menuResetPolicyToken = 0
+
+local function clearMenuResetOverride()
+	pcall(function()
+		StarterGui:SetCore("ResetButtonCallback", false)
+	end)
+end
+
+local function tryInstallMenuResetOverride(token: number)
+	for _ = 1, 20 do
+		if token ~= menuResetPolicyToken then
+			return
+		end
+		local ok = pcall(function()
+			StarterGui:SetCore("ResetButtonCallback", menuResetSink)
+		end)
+		if ok then
+			return
+		end
+		task.wait(0.35)
+	end
+end
+
+local function applyMenuResetPolicy()
+	if phaseValue ~= "Idle" then
+		menuResetPolicyToken += 1
+		local token = menuResetPolicyToken
+		task.defer(function()
+			tryInstallMenuResetOverride(token)
+		end)
+	else
+		menuResetPolicyToken += 1
+		clearMenuResetOverride()
+	end
+end
+
 local function isLocalPlayerInRoundLeaderboard(payload: { [string]: any }?): boolean
 	if typeof(payload) ~= "table" then
 		return false
@@ -483,6 +523,7 @@ roundStateEvent.OnClientEvent:Connect(function(payload)
 	end
 	lastProfitBoardPayload = payload
 	updateProfitBoardText(payload)
+	applyMenuResetPolicy()
 end)
 
 continuePromptEvent.OnClientEvent:Connect(function(payload)
@@ -571,3 +612,5 @@ RunService.RenderStepped:Connect(function()
 		end
 	end
 end)
+
+applyMenuResetPolicy()

@@ -106,8 +106,23 @@ local function parseTeleportData(player: Player): TeleportData
 	return {}
 end
 
-local function isLobbyPaidTeleport(data: TeleportData): boolean
-	return data.source == "lobby"
+-- TeleportData.source values set by LobbyPaidTeleportService after entry fee debit.
+local PREPAID_LOBBY_ENTRY_SOURCES: { [string]: true } = {
+	lobby = true,
+	portal_blue = true,
+	legacy_remote = true,
+	join_map_remote = true,
+}
+
+local function hasPrepaidEntryFromLobbyTeleport(data: TeleportData): boolean
+	if data.kind ~= "match" or not data.mapId or not MatchMaps.getMapById(data.mapId) then
+		return false
+	end
+	local source = data.source
+	if not source or not PREPAID_LOBBY_ENTRY_SOURCES[source] then
+		return false
+	end
+	return true
 end
 
 local function isMatchJoin(player: Player): (boolean, string?)
@@ -467,22 +482,26 @@ end)
 
 Players.PlayerAdded:Connect(function(player: Player)
 	local isMatch, mapId = isMatchJoin(player)
-	if not isMatch or not mapId then
-		return
+	if isMatch and mapId then
+		currentMapId = mapId
 	end
 
-	currentMapId = mapId
-	if phase == "ActiveRound" then
-		local data = parseTeleportData(player)
-		if isLobbyPaidTeleport(data) then
-			-- Lobby portal fee already paid; skip exactly one continue debit to enter the next round.
+	local data = parseTeleportData(player)
+
+	if phase == "ActiveRound" and currentMapId ~= nil then
+		if hasPrepaidEntryFromLobbyTeleport(data) then
 			skipOneContinueForUserId[player.UserId] = true
 		else
 			midRoundSpectatorContinueByUserId[player.UserId] = true
 		end
-	else
-		pendingParticipants[player.UserId] = true
+		return
 	end
+
+	if not isMatch or not mapId then
+		return
+	end
+
+	pendingParticipants[player.UserId] = true
 end)
 
 MatchRoundBridge.setCallbacks({
