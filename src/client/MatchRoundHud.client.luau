@@ -100,11 +100,23 @@ continueFrame.Name = "ContinuePrompt"
 continueFrame.AnchorPoint = Vector2.new(0.5, 1)
 continueFrame.Position = UDim2.new(0.5, 0, 1, -24)
 continueFrame.Size = UDim2.fromOffset(460, 130)
-continueFrame.BackgroundColor3 = Color3.fromRGB(18, 24, 20)
-continueFrame.BackgroundTransparency = 0.2
+-- Match `roundTimerTab` panel (same fill, transparency, corner, stroke).
+continueFrame.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
+continueFrame.BackgroundTransparency = 0.12
+continueFrame.BorderSizePixel = 0
 continueFrame.Visible = false
 continueFrame.ZIndex = 2
 continueFrame.Parent = screenGui
+
+local continueFrameCorner = Instance.new("UICorner")
+continueFrameCorner.CornerRadius = UDim.new(0, 8)
+continueFrameCorner.Parent = continueFrame
+
+local continueFrameStroke = Instance.new("UIStroke")
+continueFrameStroke.Color = Color3.fromRGB(90, 100, 130)
+continueFrameStroke.Transparency = 0.45
+continueFrameStroke.Thickness = 1
+continueFrameStroke.Parent = continueFrame
 
 local continueLabel = Instance.new("TextLabel")
 continueLabel.BackgroundTransparency = 1
@@ -113,7 +125,7 @@ continueLabel.Size = UDim2.fromOffset(430, 48)
 continueLabel.Font = Enum.Font.GothamBold
 continueLabel.TextSize = 20
 continueLabel.TextWrapped = true
-continueLabel.TextColor3 = Color3.fromRGB(230, 245, 235)
+continueLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
 continueLabel.Text = "Continue for $0?"
 continueLabel.Parent = continueFrame
 
@@ -122,22 +134,32 @@ yesButton.Name = "Yes"
 yesButton.Position = UDim2.fromOffset(24, 74)
 yesButton.Size = UDim2.fromOffset(180, 40)
 yesButton.BackgroundColor3 = Color3.fromRGB(46, 122, 64)
+yesButton.BorderSizePixel = 0
 yesButton.Font = Enum.Font.GothamBold
 yesButton.TextSize = 20
 yesButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 yesButton.Text = "Yes"
 yesButton.Parent = continueFrame
 
+local yesButtonCorner = Instance.new("UICorner")
+yesButtonCorner.CornerRadius = UDim.new(0, 8)
+yesButtonCorner.Parent = yesButton
+
 local noButton = Instance.new("TextButton")
 noButton.Name = "No"
 noButton.Position = UDim2.fromOffset(256, 74)
 noButton.Size = UDim2.fromOffset(180, 40)
 noButton.BackgroundColor3 = Color3.fromRGB(126, 44, 44)
+noButton.BorderSizePixel = 0
 noButton.Font = Enum.Font.GothamBold
 noButton.TextSize = 20
 noButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 noButton.Text = "No"
 noButton.Parent = continueFrame
+
+local noButtonCorner = Instance.new("UICorner")
+noButtonCorner.CornerRadius = UDim.new(0, 8)
+noButtonCorner.Parent = noButton
 
 local PROFIT_BILLBOARD_NAME = "MatchRoundHudProfitBillboard"
 local PROFIT_BILLBOARD_LABEL_NAME = "ProfitTextBillboard"
@@ -423,8 +445,7 @@ local function updateOneProfitBoard(root: Instance, turretIndex: number, payload
 
 	local billboardLabel = ensureProfitBillboardLabel(adornee)
 	billboardLabel.Text = text
-	-- T2/T3: 180° UI flip. T1/T4 use 0°.
-	billboardLabel.Rotation = if turretIndex == 2 or turretIndex == 3 then 180 else 0
+	billboardLabel.Rotation = 0
 	local bbGui = adornee:FindFirstChild(PROFIT_BILLBOARD_NAME)
 	if bbGui and bbGui:IsA("BillboardGui") then
 		setBillboardAbovePart(adornee, bbGui)
@@ -440,7 +461,7 @@ local function updateOneProfitBoard(root: Instance, turretIndex: number, payload
 				clearOpaqueAncestorsToSurfaceGui(surfaceLabel, surfaceGui)
 				styleProfitBoard(surfaceLabel, surfaceGui)
 				surfaceLabel.Text = text
-				surfaceLabel.Rotation = if turretIndex == 2 or turretIndex == 3 then 180 else 0
+				surfaceLabel.Rotation = 0
 			end
 		else
 			surfaceGui.Enabled = false

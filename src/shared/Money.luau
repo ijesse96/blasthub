@@ -1,6 +1,7 @@
 local LEADERSTATS_NAME = "leaderstats"
 local CASH_NAME = "Cash"
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared")
 local EconomyStore = require(sharedFolder:WaitForChild("EconomyStore"))
@@ -63,6 +64,16 @@ end
 
 function Money.tryDebitEntryFeeAsync(userId: number, fee: number): (boolean, number)
 	return EconomyStore.tryDebitEntryFeeAsync(userId, fee)
+end
+
+function Money.refundEntryFeeAsync(userId: number, fee: number): (boolean, number)
+	local ok, newBalance = EconomyStore.refundEntryFeeAsync(userId, fee)
+	local player = Players:GetPlayerByUserId(userId)
+	if ok and player then
+		local cash = Money.setupPlayer(player)
+		cash.Value = newBalance
+	end
+	return ok, newBalance
 end
 
 return Money

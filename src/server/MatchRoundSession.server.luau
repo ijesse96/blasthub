@@ -14,7 +14,7 @@ local INTERMISSION_SECONDS = 5
 local ROUND_SECONDS = 120
 local CONTINUE_PROMPT_SECONDS = 10
 local MIN_HUMANS_FOR_FIRST_PLACE_BONUS = 2
-local MIN_CONTINUE_YES_TO_START_NEXT_ROUND = 2
+local MIN_CONTINUE_YES_TO_START_NEXT_ROUND = 1
 local STUDIO_SOLO_TEST_OVERRIDE = true
 
 local IS_STUDIO = RunService:IsStudio()
@@ -45,6 +45,8 @@ local continueChoiceByUserId: { [number]: boolean } = {}
 local continueEligibleByUserId: { [number]: true } = {}
 local coinsWonByUserId: { [number]: number } = {}
 local coinsSpentByUserId: { [number]: number } = {}
+-- Continue fee debited but next ActiveRound not started yet (refund on disconnect in this window).
+local chargedAwaitingRoundStartByUserId: { [number]: number } = {}
 
 type LeaderboardRow = {
 	userId: number,
@@ -290,6 +292,7 @@ local function startIntermission()
 end
 
 local function startActiveRound()
+	table.clear(chargedAwaitingRoundStartByUserId)
 	phase = "ActiveRound"
 	activeRoundParticipants = {}
 	coinsWonByUserId = {}
@@ -411,6 +414,7 @@ local function resolveContinuePhase(mapId: string)
 
 	for userId in justContinued do
 		pendingParticipants[userId] = true
+		chargedAwaitingRoundStartByUserId[userId] = map.entryFee
 	end
 
 	for userId in skipOneContinueForUserId do
@@ -433,7 +437,7 @@ local function finishRound(mapId: string)
 	MatchRoundBridge.clearFishNow()
 
 	local scoredHumanCount = countSet(activeRoundParticipants)
-	local minForBonus = if SOLO_TEST_ENABLED then 1 else MIN_HUMANS_FOR_FIRST_PLACE_BONUS
+	local minForBonus = MIN_HUMANS_FOR_FIRST_PLACE_BONUS
 	local bonusEligible = scoredHumanCount >= minForBonus
 	local leaderboard = buildLeaderboardRows()
 	local winnerName: string? = nil
@@ -541,6 +545,13 @@ MatchRoundBridge.setCallbacks({
 
 Players.PlayerRemoving:Connect(function(player: Player)
 	local userId = player.UserId
+	local refundFee = chargedAwaitingRoundStartByUserId[userId]
+	if typeof(refundFee) == "number" and refundFee > 0 then
+		chargedAwaitingRoundStartByUserId[userId] = nil
+		task.spawn(function()
+			Money.refundEntryFeeAsync(userId, refundFee)
+		end)
+	end
 	pendingParticipants[userId] = nil
 	activeRoundParticipants[userId] = nil
 	skipOneContinueForUserId[userId] = nil

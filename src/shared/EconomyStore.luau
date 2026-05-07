@@ -84,4 +84,28 @@ function EconomyStore.tryDebitEntryFeeAsync(userId: number, fee: number): (boole
 	return debited, finalBalance
 end
 
+function EconomyStore.refundEntryFeeAsync(userId: number, fee: number): (boolean, number)
+	ensureServer()
+	local safeFee = clampCash(fee)
+	if safeFee <= 0 then
+		return true, EconomyStore.loadCashAsync(userId)
+	end
+
+	local finalBalance = STARTING_CASH
+	local ok, err = pcall(function()
+		store:UpdateAsync(keyForUserId(userId), function(current)
+			local currentCash = if typeof(current) == "number" then clampCash(current) else STARTING_CASH
+			finalBalance = clampCash(currentCash + safeFee)
+			return finalBalance
+		end)
+	end)
+
+	if not ok then
+		warn(string.format("[EconomyStore] refundEntryFeeAsync failed for %d: %s", userId, tostring(err)))
+		return false, EconomyStore.loadCashAsync(userId)
+	end
+
+	return true, finalBalance
+end
+
 return EconomyStore
