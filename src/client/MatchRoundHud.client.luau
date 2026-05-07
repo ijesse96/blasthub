@@ -408,6 +408,55 @@ local function formatSeconds(secondsLeft: number): string
 	return string.format("%d:%02d", minutes, seconds)
 end
 
+-- Prefix for the name line when this slot's occupant matches server leaderboard[1].
+local FIRST_PLACE_NAME_PREFIX = "👑 "
+-- Matches server MatchRoundSession MIN_HUMANS_FOR_FIRST_PLACE_BONUS (crown only when first-place bonus can apply).
+local MIN_PARTICIPANTS_FOR_FIRST_PLACE_CROWN = 2
+
+local function shouldShowFirstPlaceCrown(payload: { [string]: any }?): boolean
+	if typeof(payload) ~= "table" then
+		return false
+	end
+	if payload.bonusEligible == true then
+		return true
+	end
+	if payload.bonusEligible == false then
+		return false
+	end
+	local participantCount = payload.participantCount
+	if typeof(participantCount) == "number" and participantCount >= MIN_PARTICIPANTS_FOR_FIRST_PLACE_CROWN then
+		return true
+	end
+	local scored = payload.scoredHumanCount
+	if typeof(scored) == "number" and scored >= MIN_PARTICIPANTS_FOR_FIRST_PLACE_CROWN then
+		return true
+	end
+	local lb = payload.leaderboard
+	if typeof(lb) == "table" and #lb >= MIN_PARTICIPANTS_FOR_FIRST_PLACE_CROWN then
+		return true
+	end
+	return false
+end
+
+local function getProfitLeaderUserId(payload: { [string]: any }?): number?
+	if typeof(payload) ~= "table" then
+		return nil
+	end
+	local lb = payload.leaderboard
+	if typeof(lb) ~= "table" then
+		return nil
+	end
+	local top = lb[1]
+	if typeof(top) ~= "table" then
+		return nil
+	end
+	local uid = top.userId
+	if typeof(uid) == "number" then
+		return uid
+	end
+	return nil
+end
+
 local function updatePromptVisual()
 	yesButton.AutoButtonColor = promptCanAfford
 	yesButton.Active = promptCanAfford
@@ -431,13 +480,24 @@ local function updateOneProfitBoard(root: Instance, turretIndex: number, payload
 	end
 
 	local text = "Empty\n$0"
+	local leaderUserId = if shouldShowFirstPlaceCrown(payload) then getProfitLeaderUserId(payload) else nil
 	local turretBoards = payload.turretBoards
 	if typeof(turretBoards) == "table" then
 		for _, row in turretBoards do
 			if typeof(row) == "table" and row.turretIndex == turretIndex then
 				local rowName = if typeof(row.name) == "string" then row.name else "Empty"
 				local rowProfit = if typeof(row.netProfit) == "number" then row.netProfit else 0
-				text = string.format("%s\n$%d", rowName, rowProfit)
+				local rowUserId = if typeof(row.userId) == "number" then row.userId else nil
+				local displayName = rowName
+				if
+					rowUserId ~= nil
+					and leaderUserId ~= nil
+					and rowUserId == leaderUserId
+					and rowName ~= "Empty"
+				then
+					displayName = FIRST_PLACE_NAME_PREFIX .. rowName
+				end
+				text = string.format("%s\n$%d", displayName, rowProfit)
 				break
 			end
 		end

@@ -373,6 +373,7 @@ local function resolveContinuePhase(mapId: string)
 	broadcastState({
 		seconds = CONTINUE_PROMPT_SECONDS,
 		turretBoards = buildTurretBoardRows(),
+		leaderboard = buildLeaderboardRows(),
 	})
 
 	task.wait(CONTINUE_PROMPT_SECONDS)
