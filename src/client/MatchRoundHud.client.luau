@@ -95,70 +95,75 @@ timerTabClock.TextWrapped = false
 timerTabClock.Text = "--"
 timerTabClock.Parent = roundTimerTab
 
+-- Continue prompt: standalone simple panel (no shared styling with other HUD).
+local CONTINUE_PANEL = Color3.fromRGB(42, 44, 52)
+local CONTINUE_TEXT = Color3.fromRGB(255, 255, 255)
+local CONTINUE_YES = Color3.fromRGB(72, 168, 96)
+local CONTINUE_YES_DISABLED = Color3.fromRGB(88, 90, 98)
+local CONTINUE_NO = Color3.fromRGB(168, 56, 56)
+
 local continueFrame = Instance.new("Frame")
 continueFrame.Name = "ContinuePrompt"
 continueFrame.AnchorPoint = Vector2.new(0.5, 1)
 continueFrame.Position = UDim2.new(0.5, 0, 1, -24)
-continueFrame.Size = UDim2.fromOffset(460, 130)
--- Match `roundTimerTab` panel (same fill, transparency, corner, stroke).
-continueFrame.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
-continueFrame.BackgroundTransparency = 0.12
+continueFrame.Size = UDim2.fromOffset(460, 124)
+continueFrame.BackgroundColor3 = CONTINUE_PANEL
+continueFrame.BackgroundTransparency = 0
 continueFrame.BorderSizePixel = 0
 continueFrame.Visible = false
 continueFrame.ZIndex = 2
 continueFrame.Parent = screenGui
 
 local continueFrameCorner = Instance.new("UICorner")
-continueFrameCorner.CornerRadius = UDim.new(0, 8)
+continueFrameCorner.CornerRadius = UDim.new(0, 6)
 continueFrameCorner.Parent = continueFrame
 
-local continueFrameStroke = Instance.new("UIStroke")
-continueFrameStroke.Color = Color3.fromRGB(90, 100, 130)
-continueFrameStroke.Transparency = 0.45
-continueFrameStroke.Thickness = 1
-continueFrameStroke.Parent = continueFrame
-
 local continueLabel = Instance.new("TextLabel")
+-- Must be above `continueFrame.ZIndex` or the frame fill can hide descendants (default ZIndex is 1).
+continueLabel.ZIndex = 10
 continueLabel.BackgroundTransparency = 1
-continueLabel.Position = UDim2.fromOffset(14, 10)
-continueLabel.Size = UDim2.fromOffset(430, 48)
+continueLabel.Position = UDim2.fromOffset(16, 12)
+continueLabel.Size = UDim2.new(1, -32, 0, 44)
 continueLabel.Font = Enum.Font.GothamBold
-continueLabel.TextSize = 20
+continueLabel.TextSize = 18
 continueLabel.TextWrapped = true
-continueLabel.TextColor3 = Color3.fromRGB(220, 230, 255)
+continueLabel.TextColor3 = CONTINUE_TEXT
 continueLabel.Text = "Continue for $0?"
+continueLabel.TextXAlignment = Enum.TextXAlignment.Left
 continueLabel.Parent = continueFrame
 
 local yesButton = Instance.new("TextButton")
+yesButton.ZIndex = 10
 yesButton.Name = "Yes"
-yesButton.Position = UDim2.fromOffset(24, 74)
-yesButton.Size = UDim2.fromOffset(180, 40)
-yesButton.BackgroundColor3 = Color3.fromRGB(46, 122, 64)
+yesButton.Position = UDim2.fromOffset(16, 68)
+yesButton.Size = UDim2.fromOffset(200, 38)
+yesButton.BackgroundColor3 = CONTINUE_YES
 yesButton.BorderSizePixel = 0
 yesButton.Font = Enum.Font.GothamBold
-yesButton.TextSize = 20
+yesButton.TextSize = 18
 yesButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 yesButton.Text = "Yes"
 yesButton.Parent = continueFrame
 
 local yesButtonCorner = Instance.new("UICorner")
-yesButtonCorner.CornerRadius = UDim.new(0, 8)
+yesButtonCorner.CornerRadius = UDim.new(0, 4)
 yesButtonCorner.Parent = yesButton
 
 local noButton = Instance.new("TextButton")
+noButton.ZIndex = 10
 noButton.Name = "No"
-noButton.Position = UDim2.fromOffset(256, 74)
-noButton.Size = UDim2.fromOffset(180, 40)
-noButton.BackgroundColor3 = Color3.fromRGB(126, 44, 44)
+noButton.Position = UDim2.fromOffset(244, 68)
+noButton.Size = UDim2.fromOffset(200, 38)
+noButton.BackgroundColor3 = CONTINUE_NO
 noButton.BorderSizePixel = 0
 noButton.Font = Enum.Font.GothamBold
-noButton.TextSize = 20
+noButton.TextSize = 18
 noButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 noButton.Text = "No"
 noButton.Parent = continueFrame
 
 local noButtonCorner = Instance.new("UICorner")
-noButtonCorner.CornerRadius = UDim.new(0, 8)
+noButtonCorner.CornerRadius = UDim.new(0, 4)
 noButtonCorner.Parent = noButton
 
 local PROFIT_BILLBOARD_NAME = "MatchRoundHudProfitBillboard"
@@ -460,7 +465,7 @@ end
 local function updatePromptVisual()
 	yesButton.AutoButtonColor = promptCanAfford
 	yesButton.Active = promptCanAfford
-	yesButton.BackgroundColor3 = if promptCanAfford then Color3.fromRGB(46, 122, 64) else Color3.fromRGB(70, 70, 70)
+	yesButton.BackgroundColor3 = if promptCanAfford then CONTINUE_YES else CONTINUE_YES_DISABLED
 	yesButton.Text = if promptCanAfford then "Yes" else "Need More Cash"
 end
 
