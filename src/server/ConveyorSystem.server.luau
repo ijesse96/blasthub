@@ -8,11 +8,10 @@ local Debris = game:GetService("Debris")
 
 local HIT_FLASH_REMOTE_NAME = "AntiAirConveyorHitFlash"
 local CASH_FLY_VFX_REMOTE_NAME = "CashFlyVfx"
-local SHOT_COST_AMOUNT = 1
-local SHOT_COST_DEBOUNCE_SECONDS = 0.12
-
+local SPLASH_KILL_FISH_VFX_REMOTE_NAME = "SplashKillFishVfx"
 local Money = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Money"))
 local MatchRoundBridge = require(script.Parent:WaitForChild("MatchRoundBridge"))
+local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
 
 local function ensureRemoteEvent(name: string)
 	local existing = ReplicatedStorage:FindFirstChild(name)
@@ -30,15 +29,22 @@ end
 
 ensureRemoteEvent(HIT_FLASH_REMOTE_NAME)
 ensureRemoteEvent(CASH_FLY_VFX_REMOTE_NAME)
+ensureRemoteEvent(SPLASH_KILL_FISH_VFX_REMOTE_NAME)
 
 local CONVEYOR_ITEMS_FOLDER = "ConveyorItems"
 local ACTIVE_ITEMS_FOLDER = "ConveyorActiveItems"
-local CONVEYOR_NAME_PREFIX = "Conveyor"
+-- When false, no arena targets spawn (no templates, no fallback crates). Hit/cash wiring still loads.
+local CONVEYOR_ARENA_TARGETS_ENABLED = false
+-- Arena edges from Workspace.BulletArenaBoundaries AABB: Left=min X, Right=max X, Top=max Z, Bottom=min Z.
+local BOUNDARY_FOLDER_NAME = "BulletArenaBoundaries"
+local SPAWN_MARGIN = 8
 
 local SPAWN_INTERVAL = 1.2
 local CONVEYOR_SPEED = 11
-local MAX_ACTIVE_ITEMS_PER_CONVEYOR = 28
-local TARGET_ACTIVE_ITEMS_PER_CONVEYOR = 14
+local MAX_ACTIVE_ITEMS = 28
+local TARGET_ACTIVE_ITEMS = 14
+-- Relative spawn frequency for: L→R, R→L, Top→Bottom, Bottom→Top, TL→BR, BL→TR
+local PATH_WEIGHTS: { number } = { 1, 1, 1, 1, 1, 1 }
 local ITEM_SPACING = 20
 local END_REACHED_THRESHOLD = 3
 local Y_OFFSET = 2.5
@@ -48,6 +54,14 @@ local BASE_TEMPLATE_MAX_AXIS_STUDS = 2.5
 local MAX_PART_AXIS_STUDS = 40
 local MAX_SPECIAL_MESH_AXIS_SCALE = 40
 local SCALE_ATTRIBUTE = "ConveyorSpawnScale"
+local SPAWN_RELATIVE_SIZE_ATTRIBUTE = "ConveyorSpawnRelativeSize"
+local SPAWN_RELATIVE_SIZE_MIN = 0.01
+local SPAWN_RELATIVE_SIZE_MAX = 3
+-- Binary `shark fin.rbxm` cannot carry repo-edited attributes; default when attribute is unset.
+local SHARK_FIN_TEMPLATE_NAME_LOWER = "shark fin"
+local SHARK_FIN_DEFAULT_RELATIVE_SIZE = 0.45
+-- Set true to include `shark fin` from ServerStorage.ConveyorItems in the random spawn pool.
+local ENABLE_SHARK_FIN_CONVEYOR_TEMPLATE = false
 local CONVEYOR_ITEM_ATTRIBUTE = "IsConveyorItem"
 local CONVEYOR_HEALTH_ATTRIBUTE = "ConveyorHealth"
 local CONVEYOR_MAX_HEALTH_ATTRIBUTE = "ConveyorMaxHealth"
@@ -92,33 +106,27 @@ local FLASH_DEBOUNCE_ATTRIBUTE = "ConveyorHitFlashActive"
 local FLASH_BLINK_COUNT = 1
 local FLASH_ON_TIME = 0.12
 local FLASH_OFF_TIME = 0.04
+-- Fish net uses BillboardGui; keep it longer than the red flash so it reads clearly.
+local FISH_NET_VISIBLE_SEC = 0.45
+-- Player harpoon kill: reel catch to muzzle this long before payout.
+local HARPOON_REEL_KILL_DURATION_SEC = 2.1
+-- Nearly-invisible BaseParts (e.g. water splash anchors) still get a readable red tint during flash.
+local FLASH_VIS_MAX_TRANSPARENCY = 0.32
+-- flashModelRed spawns a brief fish-net overlay on every conveyor anti-air hit.
+local HIT_FISH_NET_FOLDER_NAME = "HitFishNet"
+-- Full "rbxassetid://..." or numeric id string; leave nil for procedural beam crosshatch.
+local WATER_SPLASH_NET_TEXTURE_ID: string? = "rbxassetid://135625585340416"
+-- Must match WaterSplashSpawner.server.luau
+local IS_WATER_SPLASH_ATTRIBUTE = "IsWaterSplash"
+local SPLASH_HIT_COLLIDER_NAME = "SplashHitCollider"
+-- Splash kill: frames from ReplicatedStorage.commonsplashfishframes (StringValues, sorted by name).
+local COMMON_SPLASH_FISH_FRAMES_FOLDER = "commonsplashfishframes"
+local SPLASH_KILL_FISH_FALLBACK_IMAGE_ID = "rbxassetid://134499702905260"
 local ANTI_AIR_MODEL_NAME = "Anti Air"
 local DEBUG_FLASH = true
 
 local function isAntiAirModelName(name: string): boolean
 	return string.find(name, "^" .. ANTI_AIR_MODEL_NAME) ~= nil
-end
-
-local function isPlayerInAllowedTurret(player: Player): boolean
-	local character = player.Character
-	if not character then
-		return false
-	end
-
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not humanoid or not humanoid.SeatPart then
-		return false
-	end
-
-	local current: Instance? = humanoid.SeatPart.Parent
-	while current do
-		if current:IsA("Model") and isAntiAirModelName(current.Name) then
-			return true
-		end
-		current = current.Parent
-	end
-
-	return false
 end
 
 local function debugLog(...)
@@ -127,47 +135,61 @@ local function debugLog(...)
 	end
 end
 
-warn("[AntiAirFlashServer] ConveyorSystem started")
+warn("[AntiAirFlashServer] Arena boundary target system started")
 
-type ConveyorState = {
-	model: Model,
-	startPart: BasePart,
-	endPart: BasePart,
-	dir: Vector3,
-	length: number,
+type ArenaBounds = {
+	minX: number,
+	maxX: number,
+	minZ: number,
+	maxZ: number,
 	beltY: number,
-	activeItems: { Model },
+	widthX: number,
+	depthZ: number,
+}
+
+type ActiveArenaItem = {
+	model: Model,
+	dir: Vector3,
+	spawnOrigin: Vector3,
+	distanceS: number,
+	pathLength: number,
+}
+
+type ArenaRunnerState = {
+	activeItems: { ActiveArenaItem },
 	nextSpawnTime: number,
 	templateBag: { Instance },
 	templateBagIndex: number,
 }
 
-local conveyorStatesRef: { ConveyorState } = {}
+local arenaRunnerRef: ArenaRunnerState? = nil
 
-local function registerConveyorStatesForTracking(states: { ConveyorState })
-	conveyorStatesRef = states
+local function registerArenaRunner(state: ArenaRunnerState)
+	arenaRunnerRef = state
 end
 
 local function removeConveyorItemFromTracking(model: Model)
-	for _, conveyor in conveyorStatesRef do
-		local items = conveyor.activeItems
-		for i = #items, 1, -1 do
-			if items[i] == model then
-				table.remove(items, i)
-				return
-			end
+	local runner = arenaRunnerRef
+	if not runner then
+		return
+	end
+	for i = #runner.activeItems, 1, -1 do
+		if runner.activeItems[i].model == model then
+			table.remove(runner.activeItems, i)
+			return
 		end
 	end
 end
 
 local function clearAllConveyorFish()
-	for _, conveyor in conveyorStatesRef do
-		for i = #conveyor.activeItems, 1, -1 do
-			local item = conveyor.activeItems[i]
+	local runner = arenaRunnerRef
+	if runner then
+		for i = #runner.activeItems, 1, -1 do
+			local item = runner.activeItems[i].model
 			if item and item.Parent then
 				item:Destroy()
 			end
-			table.remove(conveyor.activeItems, i)
+			table.remove(runner.activeItems, i)
 		end
 	end
 
@@ -251,6 +273,63 @@ local function spawnWorldCashPopBillboard(worldPos: Vector3, amount: number)
 	Debris:AddItem(anchor, CASH_POP_DURATION + 0.35)
 end
 
+local commonSplashFishFrameIdsCache: { string }? = nil
+local warnedMissingFishFrames = false
+
+local function getCommonSplashFishFrameIds(): { string }
+	if commonSplashFishFrameIdsCache ~= nil then
+		return commonSplashFishFrameIdsCache
+	end
+	local folder = ReplicatedStorage:FindFirstChild(COMMON_SPLASH_FISH_FRAMES_FOLDER)
+	if not folder or not folder:IsA("Folder") then
+		commonSplashFishFrameIdsCache = {}
+		return commonSplashFishFrameIdsCache
+	end
+	type FrameRow = { name: string, id: string }
+	local rows: { FrameRow } = {}
+	for _, ch in folder:GetChildren() do
+		if ch:IsA("StringValue") then
+			local v = ch.Value
+			if typeof(v) == "string" and v ~= "" then
+				table.insert(rows, { name = ch.Name, id = v })
+			end
+		end
+	end
+	table.sort(rows, function(a, b)
+		return a.name < b.name
+	end)
+	local out: { string } = {}
+	for _, r in rows do
+		table.insert(out, r.id)
+	end
+	commonSplashFishFrameIdsCache = out
+	return out
+end
+
+local function pickSplashKillFishImageId(): string
+	local frames = getCommonSplashFishFrameIds()
+	local chosen = SPLASH_KILL_FISH_FALLBACK_IMAGE_ID
+	if #frames >= 1 then
+		chosen = frames[math.random(1, #frames)]
+	elseif not warnedMissingFishFrames then
+		warnedMissingFishFrames = true
+		warn(
+			"[ConveyorSystem] commonsplashfishframes missing or empty; using fallback splash fish image"
+		)
+	end
+	return chosen
+end
+
+local function fireSplashKillFishScreenVfx(player: Player?, imageId: string, payout: number)
+	if not player or not player.Parent then
+		return
+	end
+	local remote = ReplicatedStorage:FindFirstChild(SPLASH_KILL_FISH_VFX_REMOTE_NAME)
+	if remote and remote:IsA("RemoteEvent") then
+		remote:FireClient(player, imageId, payout)
+	end
+end
+
 local function getConveyorItemsFolder(): Folder?
 	local folder = ServerStorage:FindFirstChild(CONVEYOR_ITEMS_FOLDER)
 	if folder and folder:IsA("Folder") then
@@ -293,6 +372,12 @@ local function getTemplatePool(): { Instance }
 
 	for _, child in itemsFolder:GetChildren() do
 		if child:IsA("Model") or child:IsA("BasePart") then
+			if
+				not ENABLE_SHARK_FIN_CONVEYOR_TEMPLATE
+				and string.lower(child.Name) == SHARK_FIN_TEMPLATE_NAME_LOWER
+			then
+				continue
+			end
 			table.insert(pool, child)
 		end
 	end
@@ -360,18 +445,18 @@ local function buildShuffledTemplateBag(pool: { Instance }): { Instance }
 	return bag
 end
 
-local function getNextTemplate(conveyor: ConveyorState, pool: { Instance }): Instance?
+local function getNextTemplate(runner: ArenaRunnerState, pool: { Instance }): Instance?
 	if #pool == 0 then
 		return nil
 	end
 
-	if #conveyor.templateBag == 0 or conveyor.templateBagIndex > #conveyor.templateBag then
-		conveyor.templateBag = buildShuffledTemplateBag(pool)
-		conveyor.templateBagIndex = 1
+	if #runner.templateBag == 0 or runner.templateBagIndex > #runner.templateBag then
+		runner.templateBag = buildShuffledTemplateBag(pool)
+		runner.templateBagIndex = 1
 	end
 
-	local template = conveyor.templateBag[conveyor.templateBagIndex]
-	conveyor.templateBagIndex += 1
+	local template = runner.templateBag[runner.templateBagIndex]
+	runner.templateBagIndex += 1
 	return template
 end
 
@@ -589,7 +674,182 @@ local function floatConveyorModelTowardTurret(model: Model, turretModel: Model)
 	end)
 end
 
-local function flashModelRed(model: Model)
+local function getPartWorldCornersForNet(part: BasePart): { Vector3 }
+	local cf = part.CFrame
+	local h = part.Size * 0.5
+	return {
+		cf * Vector3.new(-h.X, -h.Y, -h.Z),
+		cf * Vector3.new(h.X, -h.Y, -h.Z),
+		cf * Vector3.new(-h.X, h.Y, -h.Z),
+		cf * Vector3.new(h.X, h.Y, -h.Z),
+		cf * Vector3.new(-h.X, -h.Y, h.Z),
+		cf * Vector3.new(h.X, -h.Y, h.Z),
+		cf * Vector3.new(-h.X, h.Y, h.Z),
+		cf * Vector3.new(h.X, h.Y, h.Z),
+	}
+end
+
+-- World-space AABB for net VFX only; excludes fat invisible splash hit parts so billboard lift/size matches visuals.
+local function getModelBoundingBoxForNetVfx(model: Model): (boolean, CFrame, Vector3)
+	local minX, maxX = math.huge, -math.huge
+	local minY, maxY = math.huge, -math.huge
+	local minZ, maxZ = math.huge, -math.huge
+	local any = false
+
+	for _, inst in model:GetDescendants() do
+		if inst:IsA("BasePart") and inst.Name ~= SPLASH_HIT_COLLIDER_NAME then
+			for _, v in getPartWorldCornersForNet(inst) do
+				any = true
+				if v.X < minX then minX = v.X end
+				if v.X > maxX then maxX = v.X end
+				if v.Y < minY then minY = v.Y end
+				if v.Y > maxY then maxY = v.Y end
+				if v.Z < minZ then minZ = v.Z end
+				if v.Z > maxZ then maxZ = v.Z end
+			end
+		end
+	end
+
+	if not any or minX >= maxX or minY >= maxY or minZ >= maxZ then
+		return false, CFrame.new(), Vector3.zero
+	end
+
+	local center = Vector3.new((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)
+	local size = Vector3.new(maxX - minX, maxY - minY, maxZ - minZ)
+	return true, CFrame.new(center), size
+end
+
+local function resolveNetTextureId(): string?
+	local id = WATER_SPLASH_NET_TEXTURE_ID
+	if not id or id == "" then
+		return nil
+	end
+	if string.sub(id, 1, 13) == "rbxassetid://" then
+		return id
+	end
+	return "rbxassetid://" .. id
+end
+
+local function attachSplashFishNetHitFx(model: Model)
+	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if not primary then
+		return
+	end
+
+	local old = model:FindFirstChild(HIT_FISH_NET_FOLDER_NAME)
+	if old then
+		old:Destroy()
+	end
+
+	local okVfx, cf, size = getModelBoundingBoxForNetVfx(model)
+	if not okVfx then
+		local ok, cfFull, sizeFull = pcall(function()
+			return model:GetBoundingBox()
+		end)
+		if not ok or typeof(cfFull) ~= "CFrame" or typeof(sizeFull) ~= "Vector3" then
+			return
+		end
+		cf = cfFull
+		size = sizeFull
+	end
+
+	local folder = Instance.new("Folder")
+	folder.Name = HIT_FISH_NET_FOLDER_NAME
+	folder.Parent = model
+
+	local hx = math.max(size.X, 4) * 1.05
+	local hz = math.max(size.Z, 4) * 1.05
+
+	local texId = resolveNetTextureId()
+	if texId then
+		-- World-space billboard above bbox center so the net faces the camera (flat Texture Top was often edge-on).
+		local liftStuds = math.max(size.Y * 0.42, 1) + 0.35
+		local anchor = Instance.new("Part")
+		anchor.Name = "NetBillboardAnchor"
+		anchor.Size = Vector3.new(0.2, 0.2, 0.2)
+		anchor.CFrame = CFrame.new(cf.Position + Vector3.new(0, liftStuds, 0))
+		anchor.Anchored = true
+		anchor.CanCollide = false
+		anchor.CanQuery = false
+		anchor.CanTouch = false
+		anchor.Massless = true
+		anchor.Transparency = 1
+		anchor.Parent = folder
+
+		local anchorWeld = Instance.new("WeldConstraint")
+		anchorWeld.Part0 = anchor
+		anchorWeld.Part1 = primary
+		anchorWeld.Parent = anchor
+
+		local spread = math.max(size.X, size.Y, size.Z)
+		local px = math.clamp(math.floor(spread * 10), 120, 380)
+
+		local bb = Instance.new("BillboardGui")
+		bb.Name = "HitFishNetBillboard"
+		bb.AlwaysOnTop = true
+		bb.LightInfluence = 0
+		bb.MaxDistance = 550
+		bb.Size = UDim2.fromOffset(px, px)
+		bb.StudsOffsetWorldSpace = Vector3.zero
+		bb.Parent = anchor
+
+		local img = Instance.new("ImageLabel")
+		img.Name = "NetImage"
+		img.BackgroundTransparency = 1
+		img.Size = UDim2.fromScale(1, 1)
+		img.Image = texId
+		img.ImageTransparency = 0.08
+		img.ScaleType = Enum.ScaleType.Fit
+		img.Parent = bb
+	else
+		local plate = Instance.new("Part")
+		plate.Name = "NetPlane"
+		plate.Size = Vector3.new(hx, 0.08, hz)
+		plate.CFrame = cf * CFrame.new(0, size.Y * 0.5 + 0.06, 0)
+		plate.Anchored = true
+		plate.CanCollide = false
+		plate.CanQuery = false
+		plate.CanTouch = false
+		plate.Massless = true
+		plate.Transparency = 1
+		plate.Parent = folder
+
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = plate
+		weld.Part1 = primary
+		weld.Parent = plate
+
+		local rope = Color3.fromRGB(85, 90, 100)
+		local y = plate.Size.Y * 0.5 - 0.02
+		local hx2 = hx * 0.48
+		local hz2 = hz * 0.48
+
+		local function beamBetween(p0: Vector3, p1: Vector3)
+			local a0 = Instance.new("Attachment")
+			a0.Position = p0
+			a0.Parent = plate
+			local a1 = Instance.new("Attachment")
+			a1.Position = p1
+			a1.Parent = plate
+			local beam = Instance.new("Beam")
+			beam.Attachment0 = a0
+			beam.Attachment1 = a1
+			beam.Width0 = 0.07
+			beam.Width1 = 0.07
+			beam.FaceCamera = true
+			beam.Color = ColorSequence.new(rope)
+			beam.Transparency = NumberSequence.new(0.15)
+			beam.Parent = plate
+		end
+
+		beamBetween(Vector3.new(-hx2, y, -hz2), Vector3.new(hx2, y, hz2))
+		beamBetween(Vector3.new(-hx2, y, hz2), Vector3.new(hx2, y, -hz2))
+		beamBetween(Vector3.new(-hx2, y, 0), Vector3.new(hx2, y, 0))
+		beamBetween(Vector3.new(0, y, -hz2), Vector3.new(0, y, hz2))
+	end
+end
+
+local function flashModelRed(model: Model, persistFishNet: boolean?)
 	if model:GetAttribute(FLASH_DEBOUNCE_ATTRIBUTE) then
 		debugLog("Skipped flash (debounced)", model:GetFullName())
 		return
@@ -597,11 +857,26 @@ local function flashModelRed(model: Model)
 	debugLog("Flashing model", model:GetFullName())
 	model:SetAttribute(FLASH_DEBOUNCE_ATTRIBUTE, true)
 
-	local originalColors = {}
+	local originalColors: { [BasePart]: Color3 } = {}
+	local originalTransparency: { [BasePart]: number } = {}
+	local originalFaceColors: { [Instance]: Color3 } = {}
+	local originalVfxColorSeq: { [Instance]: ColorSequence } = {}
+
 	for _, descendant in model:GetDescendants() do
 		if descendant:IsA("BasePart") then
+			if descendant.Name == SPLASH_HIT_COLLIDER_NAME then
+				continue
+			end
 			originalColors[descendant] = descendant.Color
-			descendant.Color = Color3.fromRGB(255, 0, 0)
+			originalTransparency[descendant] = descendant.Transparency
+			descendant.Color = Color3.fromRGB(255, 110, 110)
+			descendant.Transparency = math.min(descendant.Transparency, FLASH_VIS_MAX_TRANSPARENCY)
+		elseif descendant:IsA("Decal") or descendant:IsA("Texture") then
+			originalFaceColors[descendant] = descendant.Color3
+			descendant.Color3 = Color3.fromRGB(255, 110, 110)
+		elseif descendant:IsA("ParticleEmitter") or descendant:IsA("Beam") or descendant:IsA("Trail") then
+			originalVfxColorSeq[descendant] = descendant.Color
+			descendant.Color = ColorSequence.new(Color3.fromRGB(255, 110, 110))
 		end
 	end
 
@@ -609,12 +884,26 @@ local function flashModelRed(model: Model)
 	highlight.Name = "HitFlash"
 	highlight.Adornee = model
 	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	highlight.FillColor = Color3.fromRGB(255, 0, 0)
-	highlight.OutlineColor = Color3.fromRGB(255, 64, 64)
+	highlight.FillColor = Color3.fromRGB(255, 110, 110)
+	highlight.OutlineColor = Color3.fromRGB(255, 170, 170)
 	highlight.FillTransparency = 0.25
 	highlight.OutlineTransparency = 0.1
 	highlight.Enabled = true
 	highlight.Parent = model
+
+	attachSplashFishNetHitFx(model)
+
+	if not persistFishNet then
+		task.delay(FISH_NET_VISIBLE_SEC, function()
+			if not model.Parent then
+				return
+			end
+			local fishNet = model:FindFirstChild(HIT_FISH_NET_FOLDER_NAME)
+			if fishNet then
+				fishNet:Destroy()
+			end
+		end)
+	end
 
 	task.spawn(function()
 		task.wait(FLASH_ON_TIME)
@@ -623,6 +912,22 @@ local function flashModelRed(model: Model)
 		for part, originalColor in originalColors do
 			if part and part.Parent then
 				part.Color = originalColor
+				local ot = originalTransparency[part]
+				if typeof(ot) == "number" then
+					part.Transparency = ot
+				end
+			end
+		end
+		for inst, originalC in originalFaceColors do
+			if inst and inst.Parent and (inst:IsA("Decal") or inst:IsA("Texture")) then
+				inst.Color3 = originalC
+			end
+		end
+		for inst, originalSeq in originalVfxColorSeq do
+			if inst and inst.Parent then
+				if inst:IsA("ParticleEmitter") or inst:IsA("Beam") or inst:IsA("Trail") then
+					inst.Color = originalSeq
+				end
 			end
 		end
 
@@ -632,7 +937,13 @@ local function flashModelRed(model: Model)
 	end)
 end
 
-local function applyRandomHitDamage(model: Model, turretModel: Model?, rewardPlayer: Player?)
+local function applyRandomHitDamage(
+	model: Model,
+	turretModel: Model?,
+	rewardPlayer: Player?,
+	attackerPlayer: Player?,
+	projectilePart: BasePart?
+): ConveyorAntiAirBridge.PostHitRetract?
 	local current = model:GetAttribute(CONVEYOR_HEALTH_ATTRIBUTE)
 	local maxHealth = model:GetAttribute(CONVEYOR_MAX_HEALTH_ATTRIBUTE)
 	if typeof(current) ~= "number" or typeof(maxHealth) ~= "number" then
@@ -641,7 +952,7 @@ local function applyRandomHitDamage(model: Model, turretModel: Model?, rewardPla
 		maxHealth = model:GetAttribute(CONVEYOR_MAX_HEALTH_ATTRIBUTE)
 	end
 	if typeof(current) ~= "number" then
-		return
+		return nil
 	end
 
 	local damage = math.random(CONVEYOR_HIT_DAMAGE_MIN, CONVEYOR_HIT_DAMAGE_MAX)
@@ -654,18 +965,88 @@ local function applyRandomHitDamage(model: Model, turretModel: Model?, rewardPla
 	end
 
 	if newHealth <= 0 then
-		local payout = model:GetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE)
-		if typeof(payout) == "number" and payout > 0 then
+		local payoutAttr = model:GetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE)
+		local payout = if typeof(payoutAttr) == "number" then payoutAttr else 0
+		local isWaterSplash = model:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) == true
+
+		local shouldReel = projectilePart ~= nil
+			and attackerPlayer ~= nil
+			and turretModel ~= nil
+			and turretModel.Parent ~= nil
+
+		if shouldReel then
+			removeConveyorItemFromTracking(model)
+			model:SetAttribute(CONVEYOR_ITEM_ATTRIBUTE, nil)
+			model.Parent = getOrCreateDeathVfxFolder()
+
+			local capturedTurret = turretModel :: Model
+			local capturedReward = rewardPlayer
+			local capturedPayout = payout
+			local capturedModel = model
+
+			return {
+				retractDuration = HARPOON_REEL_KILL_DURATION_SEC,
+				retractFollowModel = model,
+				retractFollowOffset = CFrame.new(0, 1.25, -14),
+				deferSplashReelMeter = isWaterSplash,
+				onRetractComplete = function()
+					local payPos = getTurretBillboardWorldPosition(capturedTurret)
+					if not payPos then
+						payPos = capturedTurret:GetPivot().Position + Vector3.new(0, TURRET_FLOAT_GOAL_HEIGHT, 0)
+					end
+					local isSplashKill = capturedModel:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) == true
+					if capturedPayout > 0 then
+						if not isSplashKill then
+							spawnWorldCashPopBillboard(payPos, capturedPayout)
+						end
+						if capturedReward and capturedReward.Parent then
+							Money.addCash(capturedReward, capturedPayout)
+							MatchRoundBridge.recordCoinWon(capturedReward, capturedPayout)
+							if not isSplashKill then
+								local flyRemote = ReplicatedStorage:FindFirstChild(CASH_FLY_VFX_REMOTE_NAME)
+								if flyRemote and flyRemote:IsA("RemoteEvent") then
+									flyRemote:FireClient(capturedReward, payPos, capturedPayout)
+								end
+							end
+						end
+					end
+					if isSplashKill then
+						fireSplashKillFishScreenVfx(
+							capturedReward,
+							pickSplashKillFishImageId(),
+							capturedPayout
+						)
+					end
+					local fishNet = capturedModel:FindFirstChild(HIT_FISH_NET_FOLDER_NAME)
+					if fishNet then
+						fishNet:Destroy()
+					end
+					if capturedModel.Parent then
+						capturedModel:Destroy()
+					end
+				end,
+			}
+		end
+
+		if payout > 0 then
 			local worldPos = model:GetPivot().Position
-			spawnWorldCashPopBillboard(worldPos, payout)
+			if not isWaterSplash then
+				spawnWorldCashPopBillboard(worldPos, payout)
+			end
 			if rewardPlayer then
 				Money.addCash(rewardPlayer, payout)
 				MatchRoundBridge.recordCoinWon(rewardPlayer, payout)
-				local flyRemote = ReplicatedStorage:FindFirstChild(CASH_FLY_VFX_REMOTE_NAME)
-				if flyRemote and flyRemote:IsA("RemoteEvent") then
-					flyRemote:FireClient(rewardPlayer, worldPos, payout)
+				if not isWaterSplash then
+					local flyRemote = ReplicatedStorage:FindFirstChild(CASH_FLY_VFX_REMOTE_NAME)
+					if flyRemote and flyRemote:IsA("RemoteEvent") then
+						flyRemote:FireClient(rewardPlayer, worldPos, payout)
+					end
 				end
 			end
+		end
+
+		if isWaterSplash and rewardPlayer and rewardPlayer.Parent then
+			fireSplashKillFishScreenVfx(rewardPlayer, pickSplashKillFishImageId(), payout)
 		end
 
 		removeConveyorItemFromTracking(model)
@@ -678,9 +1059,11 @@ local function applyRandomHitDamage(model: Model, turretModel: Model?, rewardPla
 			model:Destroy()
 		end
 	end
+
+	return nil
 end
 
-local function onConveyorAntiAirHit(model: Model, attackerPlayer: Player?, projectilePart: BasePart?)
+local function onConveyorAntiAirHit(model: Model, attackerPlayer: Player?, projectilePart: BasePart?): ConveyorAntiAirBridge.PostHitRetract?
 	local turretModel: Model? = nil
 	if attackerPlayer then
 		turretModel = getAntiAirTurretModelForPlayer(attackerPlayer)
@@ -694,10 +1077,11 @@ local function onConveyorAntiAirHit(model: Model, attackerPlayer: Player?, proje
 		rewardPlayer = getTurretGunnerPlayer(turretModel)
 	end
 
-	applyRandomHitDamage(model, turretModel, rewardPlayer)
+	local reelOpts = applyRandomHitDamage(model, turretModel, rewardPlayer, attackerPlayer, projectilePart)
 	if model.Parent then
-		flashModelRed(model)
+		flashModelRed(model, reelOpts ~= nil)
 	end
+	return reelOpts
 end
 
 local function isConveyorItemModel(instance: Instance): boolean
@@ -736,60 +1120,160 @@ local function setupHitFlash(model: Model)
 	end
 end
 
-local function toXZ(v: Vector3): Vector3
-	return Vector3.new(v.X, 0, v.Z)
+local function getPartWorldCorners(part: BasePart): { Vector3 }
+	local cf = part.CFrame
+	local h = part.Size * 0.5
+	return {
+		cf * Vector3.new(-h.X, -h.Y, -h.Z),
+		cf * Vector3.new(h.X, -h.Y, -h.Z),
+		cf * Vector3.new(-h.X, h.Y, -h.Z),
+		cf * Vector3.new(h.X, h.Y, -h.Z),
+		cf * Vector3.new(-h.X, -h.Y, h.Z),
+		cf * Vector3.new(h.X, -h.Y, h.Z),
+		cf * Vector3.new(-h.X, h.Y, h.Z),
+		cf * Vector3.new(h.X, h.Y, h.Z),
+	}
 end
 
-local function getConveyors(): { ConveyorState }
-	local conveyors = {}
-	local seenModel: { [Model]: boolean } = {}
+local function expandPartXZBounds(part: BasePart, minX: number, maxX: number, minZ: number, maxZ: number): (number, number, number, number)
+	local mnX, mxX, mnZ, mxZ = minX, maxX, minZ, maxZ
+	for _, v in getPartWorldCorners(part) do
+		mnX = math.min(mnX, v.X)
+		mxX = math.max(mxX, v.X)
+		mnZ = math.min(mnZ, v.Z)
+		mxZ = math.max(mxZ, v.Z)
+	end
+	return mnX, mxX, mnZ, mxZ
+end
 
-	local function tryAddConveyor(model: Model)
-		if seenModel[model] then
-			return
-		end
+local function partWorldMinCornerY(part: BasePart): number
+	local minY = math.huge
+	for _, v in getPartWorldCorners(part) do
+		minY = math.min(minY, v.Y)
+	end
+	return minY
+end
 
-		if not string.find(model.Name, "^" .. CONVEYOR_NAME_PREFIX) then
-			return
-		end
+local function getWorkspaceBaseplateTopY(): number?
+	local bp = Workspace:FindFirstChild("Baseplate")
+	if bp and bp:IsA("BasePart") then
+		return bp.Position.Y + bp.Size.Y * 0.5
+	end
+	return nil
+end
 
-		local startPart = model:FindFirstChild("Start")
-		local endPart = model:FindFirstChild("End")
-		if not startPart or not endPart then
-			return
-		end
-		if not startPart:IsA("BasePart") or not endPart:IsA("BasePart") then
-			return
-		end
-
-		local vector = toXZ(endPart.Position - startPart.Position)
-		local length = vector.Magnitude
-		if length <= 0 then
-			return
-		end
-
-		seenModel[model] = true
-		table.insert(conveyors, {
-			model = model,
-			startPart = startPart,
-			endPart = endPart,
-			dir = vector.Unit,
-			length = length,
-			beltY = startPart.Position.Y + Y_OFFSET,
-			activeItems = {},
-			nextSpawnTime = os.clock() + (math.random() * SPAWN_INTERVAL),
-			templateBag = {},
-			templateBagIndex = 1,
-		})
+local function computeArenaBounds(): ArenaBounds?
+	local folder = Workspace:FindFirstChild(BOUNDARY_FOLDER_NAME)
+	if not folder or not folder:IsA("Folder") then
+		warn("ArenaTargets: Workspace folder '" .. BOUNDARY_FOLDER_NAME .. "' not found; targets disabled.")
+		return nil
 	end
 
-	for _, descendant in Workspace:GetDescendants() do
-		if descendant:IsA("Model") then
-			tryAddConveyor(descendant)
+	local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
+	local minCornerY = math.huge
+	local partCount = 0
+
+	for _, desc in folder:GetDescendants() do
+		if desc:IsA("BasePart") then
+			minX, maxX, minZ, maxZ = expandPartXZBounds(desc, minX, maxX, minZ, maxZ)
+			minCornerY = math.min(minCornerY, partWorldMinCornerY(desc))
+			partCount += 1
 		end
 	end
 
-	return conveyors
+	if partCount == 0 or minX >= maxX - 1e-4 or minZ >= maxZ - 1e-4 then
+		warn("ArenaTargets: BulletArenaBoundaries has no BaseParts or degenerate XZ bounds; targets disabled.")
+		return nil
+	end
+
+	-- Tall walls used average part center Y and floated targets. Prefer Workspace.Baseplate top; else lowest boundary corner Y.
+	local baseTop = getWorkspaceBaseplateTopY()
+	local floorY = if baseTop ~= nil then baseTop else minCornerY
+	local beltY = floorY + Y_OFFSET
+	local widthX = maxX - minX
+	local depthZ = maxZ - minZ
+
+	return {
+		minX = minX,
+		maxX = maxX,
+		minZ = minZ,
+		maxZ = maxZ,
+		beltY = beltY,
+		widthX = widthX,
+		depthZ = depthZ,
+	}
+end
+
+local function xzHorizontalDist(a: Vector3, b: Vector3): number
+	local dx = a.X - b.X
+	local dz = a.Z - b.Z
+	return math.sqrt(dx * dx + dz * dz)
+end
+
+local function pickWeightedPathIndex(): number
+	local total = 0
+	for _, w in PATH_WEIGHTS do
+		total += w
+	end
+	if total <= 0 then
+		return math.random(1, 6)
+	end
+	local r = math.random(1, total)
+	local acc = 0
+	for i, w in PATH_WEIGHTS do
+		acc += w
+		if r <= acc then
+			return i
+		end
+	end
+	return #PATH_WEIGHTS
+end
+
+local function computeSpawnForPath(bounds: ArenaBounds, pathIndex: number, margin: number): (Vector3, Vector3, number)
+	local minX, maxX, minZ, maxZ = bounds.minX, bounds.maxX, bounds.minZ, bounds.maxZ
+	local beltY = bounds.beltY
+	local widthX = bounds.widthX
+	local depthZ = bounds.depthZ
+
+	if pathIndex == 1 then
+		local z = minZ + math.random() * depthZ
+		local spawn = Vector3.new(minX - margin, beltY, z)
+		local dir = Vector3.new(1, 0, 0)
+		return spawn, dir, widthX + 2 * margin
+	elseif pathIndex == 2 then
+		local z = minZ + math.random() * depthZ
+		local spawn = Vector3.new(maxX + margin, beltY, z)
+		local dir = Vector3.new(-1, 0, 0)
+		return spawn, dir, widthX + 2 * margin
+	elseif pathIndex == 3 then
+		local x = minX + math.random() * widthX
+		local spawn = Vector3.new(x, beltY, maxZ + margin)
+		local dir = Vector3.new(0, 0, -1)
+		return spawn, dir, depthZ + 2 * margin
+	elseif pathIndex == 4 then
+		local x = minX + math.random() * widthX
+		local spawn = Vector3.new(x, beltY, minZ - margin)
+		local dir = Vector3.new(0, 0, 1)
+		return spawn, dir, depthZ + 2 * margin
+	elseif pathIndex == 5 then
+		local planar = Vector3.new(widthX, 0, minZ - maxZ)
+		local dir = planar.Unit
+		local perp = Vector3.new(-dir.Z, 0, dir.X)
+		local jitterRange = math.min(widthX, depthZ) * 0.25
+		local jitter = (math.random() * 2 - 1) * jitterRange
+		local corner = Vector3.new(minX, beltY, maxZ)
+		local spawn = corner - dir * margin + perp * jitter
+		return spawn, dir, planar.Magnitude + 2 * margin
+	else
+		local planar = Vector3.new(widthX, 0, maxZ - minZ)
+		local dir = planar.Unit
+		local perp = Vector3.new(-dir.Z, 0, dir.X)
+		local jitterRange = math.min(widthX, depthZ) * 0.25
+		local jitter = (math.random() * 2 - 1) * jitterRange
+		local corner = Vector3.new(minX, beltY, minZ)
+		local spawn = corner - dir * margin + perp * jitter
+		return spawn, dir, planar.Magnitude + 2 * margin
+	end
 end
 
 local function anchorModel(model: Model)
@@ -823,6 +1307,19 @@ local function snapModelToBelt(model: Model, beltY: number)
 	if math.abs(yDelta) > 0.001 then
 		model:PivotTo(model:GetPivot() + Vector3.new(0, yDelta, 0))
 	end
+end
+
+local function isSpawnBlockedBySpacing(spawnXZ: Vector3, spawnScale: number, activeItems: { ActiveArenaItem }): boolean
+	for _, entry in activeItems do
+		local pos = getModelPosition(entry.model)
+		local theirScale = entry.model:GetAttribute(SCALE_ATTRIBUTE)
+		local ts = typeof(theirScale) == "number" and theirScale or 1
+		local need = ITEM_SPACING * math.max(spawnScale, ts, 1)
+		if xzHorizontalDist(spawnXZ, pos) < need then
+			return true
+		end
+	end
+	return false
 end
 
 local function setConveyorModelHealth(model: Model, maxHealth: number)
@@ -878,28 +1375,21 @@ local function maybeApplyRareGlow(model: Model)
 	highlight.Parent = model
 end
 
-local function getDistanceAlongConveyor(conveyor: ConveyorState, position: Vector3): number
-	local startPlanar = Vector3.new(conveyor.startPart.Position.X, conveyor.beltY, conveyor.startPart.Position.Z)
-	local planarPos = Vector3.new(position.X, conveyor.beltY, position.Z)
-	return (planarPos - startPlanar):Dot(conveyor.dir)
-end
-
-local function spawnConveyorItem(conveyor: ConveyorState, templates: { Instance }, activeFolder: Folder): boolean
-	if #conveyor.activeItems >= MAX_ACTIVE_ITEMS_PER_CONVEYOR then
+local function spawnArenaItem(
+	runner: ArenaRunnerState,
+	bounds: ArenaBounds,
+	templates: { Instance },
+	activeFolder: Folder
+): boolean
+	if #runner.activeItems >= MAX_ACTIVE_ITEMS then
 		return false
 	end
 
-	if #conveyor.activeItems > 0 then
-		local newest = conveyor.activeItems[#conveyor.activeItems]
-		local distFromStart = (getModelPosition(newest) - conveyor.startPart.Position).Magnitude
-		local newestScale = newest:GetAttribute(SCALE_ATTRIBUTE)
-		local spacingScale = typeof(newestScale) == "number" and newestScale or 1
-		if distFromStart < (ITEM_SPACING * spacingScale) then
-			return false
-		end
-	end
+	local pathIndex = pickWeightedPathIndex()
+	local spawnOrigin, dir, pathLength = computeSpawnForPath(bounds, pathIndex, SPAWN_MARGIN)
+	local spawnXZ = Vector3.new(spawnOrigin.X, bounds.beltY, spawnOrigin.Z)
 
-	local template = getNextTemplate(conveyor, templates)
+	local template = getNextTemplate(runner, templates)
 	local instance: Instance
 	if template then
 		instance = template:Clone()
@@ -916,8 +1406,24 @@ local function spawnConveyorItem(conveyor: ConveyorState, templates: { Instance 
 	sanitizeSpawnedModel(model)
 	local spawnScale = getUniformScaleForTargetSize(model)
 	spawnScale = getClampedScaleForBounds(model, spawnScale)
+	local relativeSize = model:GetAttribute(SPAWN_RELATIVE_SIZE_ATTRIBUTE)
+	if typeof(relativeSize) ~= "number" or relativeSize <= 0 then
+		if string.lower(model.Name) == SHARK_FIN_TEMPLATE_NAME_LOWER then
+			relativeSize = SHARK_FIN_DEFAULT_RELATIVE_SIZE
+		end
+	end
+	if typeof(relativeSize) == "number" and relativeSize > 0 then
+		spawnScale *= math.clamp(relativeSize, SPAWN_RELATIVE_SIZE_MIN, SPAWN_RELATIVE_SIZE_MAX)
+		spawnScale = getClampedScaleForBounds(model, spawnScale)
+	end
 	model:ScaleTo(spawnScale)
 	model:SetAttribute(SCALE_ATTRIBUTE, spawnScale)
+
+	if isSpawnBlockedBySpacing(spawnXZ, spawnScale, runner.activeItems) then
+		model:Destroy()
+		return false
+	end
+
 	model:SetAttribute(CONVEYOR_ITEM_ATTRIBUTE, true)
 	assignRandomConveyorHealth(model)
 
@@ -950,57 +1456,67 @@ local function spawnConveyorItem(conveyor: ConveyorState, templates: { Instance 
 			model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, math.random(NO_GLOW_CASH_MIN, NO_GLOW_CASH_MAX))
 		end
 	end
-	local spawnPos = Vector3.new(conveyor.startPart.Position.X, conveyor.beltY, conveyor.startPart.Position.Z)
-	setModelPosition(model, spawnPos)
-	snapModelToBelt(model, conveyor.beltY)
-	table.insert(conveyor.activeItems, model)
+
+	setModelPosition(model, spawnXZ)
+	snapModelToBelt(model, bounds.beltY)
+
+	table.insert(runner.activeItems, {
+		model = model,
+		dir = dir,
+		spawnOrigin = spawnXZ,
+		distanceS = 0,
+		pathLength = pathLength,
+	})
 	return true
 end
 
-local function updateConveyor(conveyor: ConveyorState, dt: number)
+local function updateArenaTargets(activeItems: { ActiveArenaItem }, dt: number, beltY: number)
 	local i = 1
-	while i <= #conveyor.activeItems do
-		local item = conveyor.activeItems[i]
+	while i <= #activeItems do
+		local entry = activeItems[i]
+		local item = entry.model
 		if not item.Parent then
-			table.remove(conveyor.activeItems, i)
+			table.remove(activeItems, i)
 			continue
 		end
 
-		local currentPosition = getModelPosition(item)
-		local startPlanar = Vector3.new(conveyor.startPart.Position.X, conveyor.beltY, conveyor.startPart.Position.Z)
-		local currentDistance = getDistanceAlongConveyor(conveyor, currentPosition)
-		local nextDistance = currentDistance + (CONVEYOR_SPEED * dt)
+		entry.distanceS += CONVEYOR_SPEED * dt
 
-		if nextDistance >= conveyor.length - END_REACHED_THRESHOLD then
+		if entry.distanceS >= entry.pathLength - END_REACHED_THRESHOLD then
 			item:Destroy()
-			table.remove(conveyor.activeItems, i)
+			table.remove(activeItems, i)
 			continue
 		end
 
-		local nextPosition = startPlanar + (conveyor.dir * nextDistance)
-		nextPosition = Vector3.new(nextPosition.X, conveyor.beltY, nextPosition.Z)
+		local nextPosition = entry.spawnOrigin + entry.dir * entry.distanceS
+		nextPosition = Vector3.new(nextPosition.X, beltY, nextPosition.Z)
 		setModelPosition(item, nextPosition)
-		snapModelToBelt(item, conveyor.beltY)
+		snapModelToBelt(item, beltY)
 
 		i += 1
 	end
 end
 
-local function runConveyorSystem()
+local function runArenaTargetSystem()
 	math.randomseed(DateTime.now().UnixTimestampMillis)
 
-	local conveyors = getConveyors()
-	if #conveyors == 0 then
-		warn("ConveyorSystem: No conveyor models found. Expected model names starting with 'Conveyor' and direct Start/End BaseParts.")
+	local bounds = computeArenaBounds()
+	if not bounds then
 		return
 	end
 
-	registerConveyorStatesForTracking(conveyors)
+	local runner: ArenaRunnerState = {
+		activeItems = {},
+		nextSpawnTime = os.clock() + math.random() * SPAWN_INTERVAL,
+		templateBag = {},
+		templateBagIndex = 1,
+	}
+	registerArenaRunner(runner)
 
 	local activeFolder = getOrCreateActiveFolder()
 	local templates = getTemplatePool()
 	if #templates == 0 then
-		warn("ConveyorSystem: No templates in ServerStorage.ConveyorItems. Using fallback crates.")
+		warn("ArenaTargets: No templates in ServerStorage.ConveyorItems. Using fallback crates.")
 	end
 
 	local lastTick = os.clock()
@@ -1009,26 +1525,22 @@ local function runConveyorSystem()
 		local dt = now - lastTick
 		lastTick = now
 
-		for _, conveyor in conveyors do
-			updateConveyor(conveyor, dt)
+		updateArenaTargets(runner.activeItems, dt, bounds.beltY)
 
-			-- Below target, never wait on an old "belt was full" spawn clock (avoids long dry spells).
-			if #conveyor.activeItems < TARGET_ACTIVE_ITEMS_PER_CONVEYOR then
-				conveyor.nextSpawnTime = math.min(conveyor.nextSpawnTime, now)
-			end
+		if #runner.activeItems < TARGET_ACTIVE_ITEMS then
+			runner.nextSpawnTime = math.min(runner.nextSpawnTime, now)
+		end
 
-			if
-				MatchRoundBridge.allowFishSpawn()
-				and #conveyor.activeItems < TARGET_ACTIVE_ITEMS_PER_CONVEYOR
-				and now >= conveyor.nextSpawnTime
-			then
-				local didSpawn = spawnConveyorItem(conveyor, templates, activeFolder)
-				if didSpawn then
-					conveyor.nextSpawnTime = now + SPAWN_INTERVAL
-				else
-					-- Retry soon when spacing temporarily blocks spawn.
-					conveyor.nextSpawnTime = now + 0.1
-				end
+		if
+			MatchRoundBridge.allowFishSpawn()
+			and #runner.activeItems < TARGET_ACTIVE_ITEMS
+			and now >= runner.nextSpawnTime
+		then
+			local didSpawn = spawnArenaItem(runner, bounds, templates, activeFolder)
+			if didSpawn then
+				runner.nextSpawnTime = now + SPAWN_INTERVAL
+			else
+				runner.nextSpawnTime = now + 0.1
 			end
 		end
 
@@ -1037,25 +1549,6 @@ local function runConveyorSystem()
 end
 
 local hitFlashRemote = getOrCreateHitFlashRemote()
-local lastShotCostAtByUserId: { [number]: number } = {}
-
-local function tryChargeShotCost(player: Player)
-	if not MatchRoundBridge.allowShooting(player) then
-		return
-	end
-	if not isPlayerInAllowedTurret(player) then
-		return
-	end
-
-	local now = os.clock()
-	local last = lastShotCostAtByUserId[player.UserId]
-	if last and (now - last) < SHOT_COST_DEBOUNCE_SECONDS then
-		return
-	end
-	lastShotCostAtByUserId[player.UserId] = now
-	Money.subtractCash(player, SHOT_COST_AMOUNT)
-	MatchRoundBridge.recordCoinSpent(player, SHOT_COST_AMOUNT)
-end
 
 hitFlashRemote.OnServerEvent:Connect(function(player, hitInstance)
 	debugLog(
@@ -1081,26 +1574,27 @@ hitFlashRemote.OnServerEvent:Connect(function(player, hitInstance)
 		if not MatchRoundBridge.allowShooting(player) then
 			return
 		end
-		tryChargeShotCost(player)
 	end
 
 	debugLog("Resolved conveyor model", hitModel:GetFullName())
 	onConveyorAntiAirHit(hitModel, player, nil)
 end)
 
-local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
 ConveyorAntiAirBridge.setProjectileConveyorHitHandler(function(model: Model, projectile: BasePart, shooter: Player?)
 	if shooter then
 		if not MatchRoundBridge.allowShooting(shooter) then
-			return
+			return nil
 		end
-		tryChargeShotCost(shooter)
 	end
-	onConveyorAntiAirHit(model, shooter, projectile)
+	return onConveyorAntiAirHit(model, shooter, projectile)
 end)
 
 MatchRoundBridge.setCallbacks({
 	clearFishNow = clearAllConveyorFish,
 })
 
-task.spawn(runConveyorSystem)
+if CONVEYOR_ARENA_TARGETS_ENABLED then
+	task.spawn(runArenaTargetSystem)
+else
+	warn("[ConveyorSystem] Arena target spawning disabled (CONVEYOR_ARENA_TARGETS_ENABLED = false)")
+end

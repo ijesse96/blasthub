@@ -158,6 +158,7 @@ local function fireProjectile(gunModel: Model, aimPoint: Vector3)
 		raycastExclude = { gunModel },
 		onConveyorHit = function(hitPart: BasePart)
 			ConveyorAntiAirBridge.notifyProjectileConveyorHit(hitPart, projectile)
+			return nil
 		end,
 	})
 end

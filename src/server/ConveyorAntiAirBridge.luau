@@ -3,7 +3,16 @@
 
 local CONVEYOR_ITEM_ATTRIBUTE = "IsConveyorItem"
 
-local handler: ((Model, BasePart, Player?) -> ())?
+export type PostHitRetract = {
+	retractDuration: number?,
+	retractFollowModel: Model?,
+	retractFollowOffset: CFrame?,
+	onRetractComplete: (() -> ())?,
+	-- When true: ricochet sim stops at hit and waits for beginDeferredRetract (splash reel meter).
+	deferSplashReelMeter: boolean?,
+}
+
+local handler: ((Model, BasePart, Player?) -> PostHitRetract?)?
 
 local function getConveyorModelFromInstance(instance: Instance): Model?
 	local current: Instance? = instance
@@ -18,15 +27,16 @@ end
 
 local M = {}
 
-function M.setProjectileConveyorHitHandler(fn: (model: Model, projectile: BasePart, shooter: Player?) -> ())
+function M.setProjectileConveyorHitHandler(fn: (model: Model, projectile: BasePart, shooter: Player?) -> PostHitRetract?)
 	handler = fn
 end
 
-function M.notifyProjectileConveyorHit(hitPart: BasePart, projectile: BasePart, shooter: Player?)
+function M.notifyProjectileConveyorHit(hitPart: BasePart, projectile: BasePart, shooter: Player?): PostHitRetract?
 	local model = getConveyorModelFromInstance(hitPart)
 	if model and handler then
-		handler(model, projectile, shooter)
+		return handler(model, projectile, shooter)
 	end
+	return nil
 end
 
 return M

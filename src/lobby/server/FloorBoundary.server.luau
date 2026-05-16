@@ -7,7 +7,7 @@ local WALL_HEIGHT = 40
 local WALL_THICKNESS = 6
 local WALL_PADDING = 0
 local SAFETY_FLOOR_DROP = 12
-local DEBUG_SHOW_BOUNDARIES = true
+local DEBUG_SHOW_BOUNDARIES = false
 
 local function normalizeName(name: string): string
 	return string.lower((name:gsub("%s+", "")))

@@ -11,6 +11,8 @@ local CONTINUE_RESPONSE_EVENT_NAME = "ContinueResponse"
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local Workspace = game:GetService("Workspace")
+local RewardUiColors = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RewardUiColors"))
+
 local remotesFolder = ReplicatedStorage:WaitForChild(REMOTES_FOLDER_NAME)
 local roundStateEvent = remotesFolder:WaitForChild(STATE_EVENT_NAME) :: RemoteEvent
 local continuePromptEvent = remotesFolder:WaitForChild(CONTINUE_PROMPT_EVENT_NAME) :: RemoteEvent
@@ -169,8 +171,8 @@ noButtonCorner.Parent = noButton
 local PROFIT_BILLBOARD_NAME = "MatchRoundHudProfitBillboard"
 local PROFIT_BILLBOARD_LABEL_NAME = "ProfitTextBillboard"
 -- World profit readout: no panel fill, vivid green; enlarge BillboardGui.Size in Studio or here.
-local PROFIT_TEXT_COLOR = Color3.fromRGB(72, 255, 140)
-local PROFIT_TEXT_STROKE = Color3.fromRGB(0, 28, 12)
+local PROFIT_TEXT_COLOR = RewardUiColors.PROFIT_GREEN
+local PROFIT_TEXT_STROKE = RewardUiColors.PROFIT_STROKE
 local PROFIT_BILLBOARD_SIZE = UDim2.fromOffset(110, 33)
 -- Float along the board part's top normal (world +Y is wrong if the board is rotated).
 local PROFIT_BILLBOARD_ABOVE_STUDS = 0.625

@@ -7,19 +7,49 @@ local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 
 local Ricochet = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirRicochetProjectile") :: ModuleScript)
+local HarpoonVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirHarpoonProjectileVisual") :: ModuleScript)
+local Money = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Money") :: ModuleScript)
 local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
 local MatchRoundBridge = require(script.Parent:WaitForChild("MatchRoundBridge"))
 
 local FIRE_REMOTE_NAME = "AntiAirPlayerFire"
-local BULLET_SPEED = 600
+local SPLASH_REEL_TAP_REMOTE_NAME = "AntiAirSplashReelTap"
+local SPLASH_REEL_METER_REMOTE_NAME = "AntiAirSplashReelMeterState"
+
+local BULLET_SPEED = 280
 local BULLET_LIFETIME_SEC = 7
 local CROSSHAIR_DISTANCE = 5000
-local MIN_FIRE_INTERVAL = 0.2
+local HARPOON_RETRACT_DURATION_SEC = 0.38
+local MUZZLE_OFFSET_STUDS = 5
 local ANTI_AIR_NAME_PREFIX = "Anti Air"
 -- Client-only turret rotation does not replicate; they send spawn + aim. Reject absurd values.
 local MAX_SPAWN_OFFSET_FROM_SERVER_GUNPART = 85
 local MAX_AIM_DIRECTION_Y = 0.42
 local PLAYER_PROJECTILES_FOLDER_NAME = "AntiAirPlayerProjectiles"
+local SHOT_COST_AMOUNT = 1
+
+local METER_START = 0.15
+local TAP_GAIN = 0.12
+local DECAY_PER_SECOND = 0.1
+local TAP_COOLDOWN_SEC = 0.07
+local METER_FULL_EPS = 0.001
+local METER_EMPTY_EPS = 0.001
+
+type SplashMeterSession = {
+	playerUserId: number,
+	projectile: BasePart,
+	merge: ConveyorAntiAirBridge.PostHitRetract,
+	meter: number,
+	lastTapClock: number,
+	lastMeterSentClock: number,
+}
+
+type PlayerSessionRow = {
+	player: Player,
+	session: SplashMeterSession,
+}
+
+local pendingSplashByUserId: { [number]: SplashMeterSession } = {}
 
 local function getOrCreatePlayerProjectilesFolder(): Folder
 	local existing = Workspace:FindFirstChild(PLAYER_PROJECTILES_FOLDER_NAME)
@@ -49,10 +79,23 @@ local function ensureRemoteEvent(name: string)
 end
 
 ensureRemoteEvent(FIRE_REMOTE_NAME)
+ensureRemoteEvent(SPLASH_REEL_TAP_REMOTE_NAME)
+ensureRemoteEvent(SPLASH_REEL_METER_REMOTE_NAME)
 
 local fireRemote = ReplicatedStorage:WaitForChild(FIRE_REMOTE_NAME) :: RemoteEvent
+local splashReelTapRemote = ReplicatedStorage:WaitForChild(SPLASH_REEL_TAP_REMOTE_NAME) :: RemoteEvent
+local splashReelMeterRemote = ReplicatedStorage:WaitForChild(SPLASH_REEL_METER_REMOTE_NAME) :: RemoteEvent
 
-local lastFireAtByUserId: { [number]: number } = {}
+local function playerHasLiveProjectile(userId: number): boolean
+	for _, child in playerProjectilesFolder:GetChildren() do
+		if child:IsA("BasePart") and child.Name == "AntiAirPlayerProjectile" then
+			if child:GetAttribute("AntiAirPredictOwner") == userId then
+				return true
+			end
+		end
+	end
+	return false
+end
 
 local function isAntiAirTurretModel(model: Model): boolean
 	return string.find(model.Name, "^" .. ANTI_AIR_NAME_PREFIX) ~= nil
@@ -87,8 +130,130 @@ local function attachBulletTag(projectile: BasePart, sourcePart: BasePart)
 	bullet.Parent = projectile
 end
 
+local function fireMeterUpdate(player: Player, session: SplashMeterSession, force: boolean)
+	local now = os.clock()
+	if not force and (now - session.lastMeterSentClock) < 0.06 then
+		return
+	end
+	session.lastMeterSentClock = now
+	splashReelMeterRemote:FireClient(player, true, session.meter)
+end
+
+local function forfeitSplashSession(player: Player, session: SplashMeterSession)
+	Ricochet.releaseDeferredRetract(session.projectile)
+	local fm = session.merge.retractFollowModel
+	if fm and fm.Parent then
+		fm:Destroy()
+	end
+	if session.projectile.Parent then
+		session.projectile:Destroy()
+	end
+	if pendingSplashByUserId[player.UserId] == session then
+		pendingSplashByUserId[player.UserId] = nil
+	end
+	splashReelMeterRemote:FireClient(player, false, 0)
+end
+
+local function completeSplashSession(player: Player, session: SplashMeterSession)
+	if pendingSplashByUserId[player.UserId] ~= session then
+		return
+	end
+	pendingSplashByUserId[player.UserId] = nil
+	splashReelMeterRemote:FireClient(player, false, 0)
+	Ricochet.beginDeferredRetract(session.projectile)
+end
+
+RunService.Heartbeat:Connect(function(dt)
+	local toForfeit: { PlayerSessionRow } = {}
+	local toComplete: { PlayerSessionRow } = {}
+	local orphanSessions: { SplashMeterSession } = {}
+
+	for userId, session in pairs(pendingSplashByUserId) do
+		local plr = Players:GetPlayerByUserId(userId)
+		if not plr then
+			table.insert(orphanSessions, session)
+		elseif not session.projectile.Parent or not getPlayerTurretModel(plr) then
+			table.insert(toForfeit, { player = plr, session = session })
+		else
+			session.meter = math.max(0, session.meter - DECAY_PER_SECOND * dt)
+			fireMeterUpdate(plr, session, false)
+			if session.meter <= METER_EMPTY_EPS then
+				table.insert(toForfeit, { player = plr, session = session })
+			elseif session.meter >= 1 - METER_FULL_EPS then
+				table.insert(toComplete, { player = plr, session = session })
+			end
+		end
+	end
+
+	for _, session in orphanSessions do
+		Ricochet.releaseDeferredRetract(session.projectile)
+		local fm = session.merge.retractFollowModel
+		if fm and fm.Parent then
+			fm:Destroy()
+		end
+		if session.projectile.Parent then
+			session.projectile:Destroy()
+		end
+		pendingSplashByUserId[session.playerUserId] = nil
+	end
+
+	for _, row in toForfeit do
+		if pendingSplashByUserId[row.player.UserId] == row.session then
+			forfeitSplashSession(row.player, row.session)
+		end
+	end
+	for _, row in toComplete do
+		if pendingSplashByUserId[row.player.UserId] == row.session then
+			completeSplashSession(row.player, row.session)
+		end
+	end
+end)
+
+Players.PlayerRemoving:Connect(function(player: Player)
+	local session = pendingSplashByUserId[player.UserId]
+	if session then
+		Ricochet.releaseDeferredRetract(session.projectile)
+		local fm = session.merge.retractFollowModel
+		if fm and fm.Parent then
+			fm:Destroy()
+		end
+		if session.projectile.Parent then
+			session.projectile:Destroy()
+		end
+		pendingSplashByUserId[player.UserId] = nil
+	end
+end)
+
+splashReelTapRemote.OnServerEvent:Connect(function(player: Player)
+	if not player or not player:IsA("Player") then
+		return
+	end
+	local session = pendingSplashByUserId[player.UserId]
+	if not session then
+		return
+	end
+	if not session.projectile.Parent or not getPlayerTurretModel(player) then
+		forfeitSplashSession(player, session)
+		return
+	end
+	local now = os.clock()
+	if now - session.lastTapClock < TAP_COOLDOWN_SEC then
+		return
+	end
+	session.lastTapClock = now
+	session.meter = math.clamp(session.meter + TAP_GAIN, 0, 1)
+	fireMeterUpdate(player, session, true)
+	if session.meter >= 1 - METER_FULL_EPS then
+		completeSplashSession(player, session)
+	end
+end)
+
 local function fireForPlayer(player: Player, clientSpawnPos: Vector3?, clientAimUnit: Vector3?, clientPredictSeq: number?)
 	if not MatchRoundBridge.allowShooting(player) then
+		return
+	end
+
+	if playerHasLiveProjectile(player.UserId) then
 		return
 	end
 
@@ -104,12 +269,6 @@ local function fireForPlayer(player: Player, clientSpawnPos: Vector3?, clientAim
 
 	local gunpart = gunFolder:FindFirstChild("gunpart")
 	if not gunpart or not gunpart:IsA("BasePart") then
-		return
-	end
-
-	local now = os.clock()
-	local last = lastFireAtByUserId[player.UserId]
-	if last and (now - last) < MIN_FIRE_INTERVAL then
 		return
 	end
 
@@ -136,10 +295,11 @@ local function fireForPlayer(player: Player, clientSpawnPos: Vector3?, clientAim
 		end
 		spawnPos = clientSpawnPos
 	else
-		spawnPos = gunpart.Position + (gunpart.CFrame.LookVector * 5)
+		spawnPos = gunpart.Position + (gunpart.CFrame.LookVector * MUZZLE_OFFSET_STUDS)
 	end
 
-	lastFireAtByUserId[player.UserId] = now
+	Money.subtractCash(player, SHOT_COST_AMOUNT)
+	MatchRoundBridge.recordCoinSpent(player, SHOT_COST_AMOUNT)
 
 	local effect = gunFolder:FindFirstChild("effect")
 	if effect then
@@ -177,12 +337,35 @@ local function fireForPlayer(player: Player, clientSpawnPos: Vector3?, clientAim
 
 	projectile.Parent = playerProjectilesFolder
 
+	local rope = HarpoonVisual.createRopeController(projectile, gunpart, {
+		muzzleStuds = MUZZLE_OFFSET_STUDS,
+	})
+
 	Ricochet.start(projectile, direction, Workspace, RunService, {
 		speed = BULLET_SPEED,
 		maxLifetimeSeconds = BULLET_LIFETIME_SEC,
 		raycastExclude = raycastExclude,
 		onConveyorHit = function(hitPart: BasePart)
-			ConveyorAntiAirBridge.notifyProjectileConveyorHit(hitPart, projectile, player)
+			return ConveyorAntiAirBridge.notifyProjectileConveyorHit(hitPart, projectile, player)
+		end,
+		retractToPart = gunpart,
+		retractDuration = HARPOON_RETRACT_DURATION_SEC,
+		retractMuzzleStuds = MUZZLE_OFFSET_STUDS,
+		retractOnlyOnHit = true,
+		onBounce = function(worldCorner: Vector3)
+			rope.addCorner(worldCorner)
+		end,
+		onSplashReelMeterPending = function(proj: BasePart, merge: ConveyorAntiAirBridge.PostHitRetract)
+			local startMeter = METER_START
+			pendingSplashByUserId[player.UserId] = {
+				playerUserId = player.UserId,
+				projectile = proj,
+				merge = merge,
+				meter = startMeter,
+				lastTapClock = 0,
+				lastMeterSentClock = 0,
+			}
+			splashReelMeterRemote:FireClient(player, true, startMeter)
 		end,
 	})
 end
@@ -197,8 +380,4 @@ fireRemote.OnServerEvent:Connect(function(player: Player, clientSpawnPos: unknow
 		if typeof(clientAimUnit) == "Vector3" then clientAimUnit else nil,
 		if typeof(clientPredictSeq) == "number" then clientPredictSeq else nil
 	)
-end)
-
-Players.PlayerRemoving:Connect(function(player)
-	lastFireAtByUserId[player.UserId] = nil
 end)

@@ -7,12 +7,43 @@ local CONVEYOR_ITEM_ATTRIBUTE = "IsConveyorItem"
 local ANTI_AIR_NAME_PREFIX = "Anti Air"
 local HORIZONTAL_SURFACE_NORMAL_Y_MIN = 0.9
 
+-- Set to true to restore bouncing off BulletArenaBoundaries and Anti Air turret geometry.
+local ANTI_AIR_RICOCHET_ENABLED = false
+
+export type PostHitRetract = {
+	retractDuration: number?,
+	retractFollowModel: Model?,
+	-- Local offset from projectile CFrame for the catch model pivot (default applied in retract).
+	retractFollowOffset: CFrame?,
+	onRetractComplete: (() -> ())?,
+	deferSplashReelMeter: boolean?,
+}
+
 export type RicochetOptions = {
 	speed: number,
 	maxLifetimeSeconds: number,
 	raycastExclude: { Instance },
-	onConveyorHit: (hitPart: BasePart) -> (),
+	onConveyorHit: (hitPart: BasePart) -> PostHitRetract?,
+	-- Optional: tween toward muzzle before destroy (harpoon retract).
+	retractToPart: BasePart?,
+	retractDuration: number?,
+	retractMuzzleStuds: number?,
+	-- Optional: world-space kink for polyline rope (arena / turret bounces).
+	onBounce: ((worldCorner: Vector3) -> ())?,
+	-- When true with retract fields set: lifetime timeout skips retract (instant destroy).
+	retractOnlyOnHit: boolean?,
+	-- Called when deferSplashReelMeter is set on hit; retract runs after beginDeferredRetract.
+	onSplashReelMeterPending: ((projectile: BasePart, merge: PostHitRetract) -> ())?,
 }
+
+type DeferredRetractRow = {
+	merge: PostHitRetract,
+	retractToPart: BasePart,
+	retractMuzzleStuds: number,
+	runService: RunService,
+}
+
+local deferredByProjectile: { [BasePart]: DeferredRetractRow } = {}
 
 local function isBoundaryPart(part: BasePart): boolean
 	local folder = part:FindFirstAncestor(BOUNDARY_FOLDER_NAME)
@@ -105,6 +136,94 @@ local function buildRaycastParams(projectile: BasePart, exclude: { Instance }): 
 	return p
 end
 
+local function hardDestroyProjectile(projectile: BasePart)
+	if projectile.Parent then
+		projectile:Destroy()
+	end
+end
+
+local function runRetractTween(
+	projectile: BasePart,
+	merge: PostHitRetract?,
+	retractPart: BasePart,
+	muzzleStuds: number,
+	dur: number,
+	runService: RunService
+)
+	local followModel = merge and merge.retractFollowModel
+	local followOffset = if merge and merge.retractFollowOffset then merge.retractFollowOffset else CFrame.new(0, 0, -12)
+	local onRetractComplete = merge and merge.onRetractComplete
+	local startPos = projectile.Position
+	local tRetract0 = os.clock()
+	if followModel and followModel.Parent then
+		pcall(function()
+			followModel:PivotTo(projectile.CFrame * followOffset)
+		end)
+	end
+	local connR: RBXScriptConnection
+	connR = runService.Heartbeat:Connect(function()
+		if not projectile.Parent then
+			connR:Disconnect()
+			if onRetractComplete then
+				task.defer(onRetractComplete)
+			end
+			return
+		end
+		if not retractPart.Parent then
+			connR:Disconnect()
+			if onRetractComplete then
+				task.defer(onRetractComplete)
+			end
+			hardDestroyProjectile(projectile)
+			return
+		end
+		local look = retractPart.CFrame.LookVector
+		if look.Magnitude < 1e-5 then
+			look = Vector3.new(0, 0, -1)
+		else
+			look = look.Unit
+		end
+		local goal = retractPart.Position + look * muzzleStuds
+		local elapsed = os.clock() - tRetract0
+		local alpha = math.clamp(elapsed / dur, 0, 1)
+		local pos = startPos:Lerp(goal, alpha)
+		projectile.CFrame = CFrame.lookAt(pos, goal)
+		if followModel and followModel.Parent then
+			pcall(function()
+				followModel:PivotTo(projectile.CFrame * followOffset)
+			end)
+		end
+		if alpha >= 1 then
+			connR:Disconnect()
+			if onRetractComplete then
+				task.defer(onRetractComplete)
+			end
+			hardDestroyProjectile(projectile)
+		end
+	end)
+end
+
+-- Remove pending deferred retract without running the tween (e.g. fish escaped).
+local function releaseDeferredRetract(projectile: BasePart): boolean
+	if deferredByProjectile[projectile] then
+		deferredByProjectile[projectile] = nil
+		return true
+	end
+	return false
+end
+
+-- Run the stored retract tween after splash reel meter fills.
+local function beginDeferredRetract(projectile: BasePart)
+	local row = deferredByProjectile[projectile]
+	if not row then
+		return
+	end
+	deferredByProjectile[projectile] = nil
+	local mergeDur = row.merge.retractDuration
+	local dur = if typeof(mergeDur) == "number" and mergeDur > 1e-3 then mergeDur else 0.38
+	runRetractTween(projectile, row.merge, row.retractToPart, row.retractMuzzleStuds, dur, row.runService)
+end
+
 -- Returns disconnect function to stop the simulation early.
 local function start(
 	projectile: BasePart,
@@ -118,9 +237,48 @@ local function start(
 	local alive = true
 	local t0 = os.clock()
 
-	local function destroyProjectile()
-		if projectile.Parent then
-			projectile:Destroy()
+	local function destroyProjectileAfterRetractIfConfigured(merge: PostHitRetract?)
+		local retractPart = options.retractToPart
+		local baseDur = options.retractDuration
+		local mergeDur = merge and merge.retractDuration
+		local dur = if typeof(mergeDur) == "number" and mergeDur > 1e-3
+			then mergeDur
+			elseif typeof(baseDur) == "number" and baseDur > 1e-3 then baseDur
+			else nil
+		local muzzleStuds = if typeof(options.retractMuzzleStuds) == "number" then options.retractMuzzleStuds else 5
+
+		if merge
+			and merge.deferSplashReelMeter == true
+			and options.onSplashReelMeterPending
+			and retractPart
+			and retractPart.Parent
+			and typeof(dur) == "number"
+			and dur > 1e-3
+		then
+			local followModel = merge.retractFollowModel
+			local followOffset = if merge.retractFollowOffset then merge.retractFollowOffset else CFrame.new(0, 0, -12)
+			if followModel and followModel.Parent then
+				pcall(function()
+					followModel:PivotTo(projectile.CFrame * followOffset)
+				end)
+			end
+			deferredByProjectile[projectile] = {
+				merge = merge,
+				retractToPart = retractPart,
+				retractMuzzleStuds = muzzleStuds,
+				runService = runService,
+			}
+			options.onSplashReelMeterPending(projectile, merge)
+			return
+		end
+
+		if retractPart and retractPart.Parent and dur then
+			runRetractTween(projectile, merge, retractPart, muzzleStuds, dur, runService)
+		else
+			if merge and merge.onRetractComplete then
+				task.defer(merge.onRetractComplete)
+			end
+			hardDestroyProjectile(projectile)
 		end
 	end
 
@@ -137,7 +295,11 @@ local function start(
 		if os.clock() - t0 >= options.maxLifetimeSeconds then
 			alive = false
 			conn:Disconnect()
-			destroyProjectile()
+			if options.retractOnlyOnHit == true then
+				hardDestroyProjectile(projectile)
+			else
+				destroyProjectileAfterRetractIfConfigured()
+			end
 			return
 		end
 
@@ -159,10 +321,15 @@ local function start(
 			local seg = (hit.Position - pos).Magnitude
 			remaining -= seg
 			local inst = hit.Instance
-			if inst:IsA("BasePart") and (isBoundaryPart(inst) or isTurretPart(inst)) then
+			if inst:IsA("BasePart") and (isBoundaryPart(inst) or isTurretPart(inst)) and ANTI_AIR_RICOCHET_ENABLED then
 				local bounceNormal = getBounceNormal(dir, hit.Normal)
 				local separationNormal = getStableSeparationNormal(bounceNormal)
 				dir = getStableRicochetDirection(dir, bounceNormal)
+				local onBounce = options.onBounce
+				if onBounce then
+					local cornerWorld = hit.Position + separationNormal * 0.12
+					onBounce(cornerWorld)
+				end
 				-- Keep the projectile outside the collider along the same normal used for reflection.
 				pos = hit.Position + separationNormal * 0.35 + dir * 0.25
 			else
@@ -172,15 +339,15 @@ local function start(
 					projectile.CFrame = CFrame.new(pos, pos + dir)
 					alive = false
 					conn:Disconnect()
-					options.onConveyorHit(convPart)
-					destroyProjectile()
+					local postHit = options.onConveyorHit(convPart)
+					destroyProjectileAfterRetractIfConfigured(postHit)
 					return
 				else
 					pos = hit.Position - dir * 0.05
 					projectile.CFrame = CFrame.new(pos, pos + dir)
 					alive = false
 					conn:Disconnect()
-					destroyProjectile()
+					destroyProjectileAfterRetractIfConfigured()
 					return
 				end
 			end
@@ -199,4 +366,6 @@ end
 
 return {
 	start = start,
+	beginDeferredRetract = beginDeferredRetract,
+	releaseDeferredRetract = releaseDeferredRetract,
 }
