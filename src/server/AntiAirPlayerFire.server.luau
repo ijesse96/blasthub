@@ -27,6 +27,9 @@ local MAX_SPAWN_OFFSET_FROM_SERVER_GUNPART = 85
 local MAX_AIM_DIRECTION_Y = 0.42
 local PLAYER_PROJECTILES_FOLDER_NAME = "AntiAirPlayerProjectiles"
 local SHOT_COST_AMOUNT = 1
+local IS_WATER_SPLASH_ATTRIBUTE = "IsWaterSplash"
+local WATER_SPLASHES_FOLDER_NAME = "WaterSplashes"
+local MAX_CHOSEN_SPLASH_DISTANCE_FROM_GUN = 500
 
 local METER_START = 0.15
 local TAP_GAIN = 0.12
@@ -118,6 +121,26 @@ local function getPlayerTurretModel(player: Player): Model?
 		current = current.Parent
 	end
 	return nil
+end
+
+local function validateChosenWaterSplash(model: Instance?, gunpart: BasePart): Model?
+	if not model or not model:IsA("Model") then
+		return nil
+	end
+	if model:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) ~= true then
+		return nil
+	end
+	local folder = Workspace:FindFirstChild(WATER_SPLASHES_FOLDER_NAME)
+	if not folder or not folder:IsA("Folder") then
+		return nil
+	end
+	if not model:IsDescendantOf(folder) then
+		return nil
+	end
+	if (model:GetPivot().Position - gunpart.Position).Magnitude > MAX_CHOSEN_SPLASH_DISTANCE_FROM_GUN then
+		return nil
+	end
+	return model
 end
 
 local function attachBulletTag(projectile: BasePart, sourcePart: BasePart)
@@ -248,7 +271,13 @@ splashReelTapRemote.OnServerEvent:Connect(function(player: Player)
 	end
 end)
 
-local function fireForPlayer(player: Player, clientSpawnPos: Vector3?, clientAimUnit: Vector3?, clientPredictSeq: number?)
+local function fireForPlayer(
+	player: Player,
+	clientSpawnPos: Vector3?,
+	clientAimUnit: Vector3?,
+	clientPredictSeq: number?,
+	clientChosenSplash: Instance?
+)
 	if not MatchRoundBridge.allowShooting(player) then
 		return
 	end
@@ -327,6 +356,7 @@ local function fireForPlayer(player: Player, clientSpawnPos: Vector3?, clientAim
 	end
 
 	local direction = aimLook
+	local chosenSplash = validateChosenWaterSplash(clientChosenSplash, gunpart)
 
 	attachBulletTag(projectile, gunpart)
 
@@ -345,6 +375,7 @@ local function fireForPlayer(player: Player, clientSpawnPos: Vector3?, clientAim
 		speed = BULLET_SPEED,
 		maxLifetimeSeconds = BULLET_LIFETIME_SEC,
 		raycastExclude = raycastExclude,
+		chosenWaterSplash = chosenSplash,
 		onConveyorHit = function(hitPart: BasePart)
 			return ConveyorAntiAirBridge.notifyProjectileConveyorHit(hitPart, projectile, player)
 		end,
@@ -370,7 +401,13 @@ local function fireForPlayer(player: Player, clientSpawnPos: Vector3?, clientAim
 	})
 end
 
-fireRemote.OnServerEvent:Connect(function(player: Player, clientSpawnPos: unknown?, clientAimUnit: unknown?, clientPredictSeq: unknown?)
+fireRemote.OnServerEvent:Connect(function(
+	player: Player,
+	clientSpawnPos: unknown?,
+	clientAimUnit: unknown?,
+	clientPredictSeq: unknown?,
+	clientChosenSplash: unknown?
+)
 	if not player or not player:IsA("Player") then
 		return
 	end
@@ -378,6 +415,7 @@ fireRemote.OnServerEvent:Connect(function(player: Player, clientSpawnPos: unknow
 		player,
 		if typeof(clientSpawnPos) == "Vector3" then clientSpawnPos else nil,
 		if typeof(clientAimUnit) == "Vector3" then clientAimUnit else nil,
-		if typeof(clientPredictSeq) == "number" then clientPredictSeq else nil
+		if typeof(clientPredictSeq) == "number" then clientPredictSeq else nil,
+		if typeof(clientChosenSplash) == "Instance" then clientChosenSplash else nil
 	)
 end)

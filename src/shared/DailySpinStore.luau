@@ -3,6 +3,9 @@ local RunService = game:GetService("RunService")
 
 local STORE_NAME = "DailySpinLastDate_v1"
 
+-- TODO: set false before release — allows unlimited daily spins for testing.
+local DISABLE_DAILY_SPIN_LIMIT = true
+
 local store = DataStoreService:GetDataStore(STORE_NAME)
 
 local DailySpinStore = {}
@@ -25,6 +28,10 @@ end
 -- Returns: claimedOk (grant cash), alreadySpunToday, storeFailed
 function DailySpinStore.tryClaimTodayAsync(userId: number): (boolean, boolean, boolean)
 	ensureServer()
+	if DISABLE_DAILY_SPIN_LIMIT then
+		return true, false, false
+	end
+
 	local todayStr = todayUtcString()
 	local key = keyForUserId(userId)
 

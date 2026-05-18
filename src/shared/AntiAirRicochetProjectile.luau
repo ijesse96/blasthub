@@ -4,7 +4,9 @@
 
 local BOUNDARY_FOLDER_NAME = "BulletArenaBoundaries"
 local CONVEYOR_ITEM_ATTRIBUTE = "IsConveyorItem"
+local IS_WATER_SPLASH_ATTRIBUTE = "IsWaterSplash"
 local ANTI_AIR_NAME_PREFIX = "Anti Air"
+local SPLASH_PASSTHROUGH_SEPARATION_STUDS = 0.35
 local HORIZONTAL_SURFACE_NORMAL_Y_MIN = 0.9
 
 -- Set to true to restore bouncing off BulletArenaBoundaries and Anti Air turret geometry.
@@ -34,6 +36,8 @@ export type RicochetOptions = {
 	retractOnlyOnHit: boolean?,
 	-- Called when deferSplashReelMeter is set on hit; retract runs after beginDeferredRetract.
 	onSplashReelMeterPending: ((projectile: BasePart, merge: PostHitRetract) -> ())?,
+	-- Splash-button shot: pierce other water splashes; only chosenWaterSplash can be hit.
+	chosenWaterSplash: Model?,
 }
 
 type DeferredRetractRow = {
@@ -65,17 +69,33 @@ local function isTurretPart(part: BasePart): boolean
 	return false
 end
 
-local function getConveyorHitPart(instance: Instance): BasePart?
-	if instance:IsA("BasePart") then
-		local current: Instance? = instance
-		while current do
-			if current:IsA("Model") and current:GetAttribute(CONVEYOR_ITEM_ATTRIBUTE) == true then
-				return instance
-			end
-			current = current.Parent
+local function getConveyorModelFromInstance(instance: Instance): Model?
+	local current: Instance? = instance
+	while current do
+		if current:IsA("Model") and current:GetAttribute(CONVEYOR_ITEM_ATTRIBUTE) == true then
+			return current
 		end
+		current = current.Parent
 	end
 	return nil
+end
+
+local function getConveyorHitPart(instance: Instance): BasePart?
+	if instance:IsA("BasePart") and getConveyorModelFromInstance(instance) then
+		return instance
+	end
+	return nil
+end
+
+local function shouldPassThroughUnchosenSplash(hitInstance: Instance, chosenWaterSplash: Model?): boolean
+	if not chosenWaterSplash or not chosenWaterSplash.Parent then
+		return false
+	end
+	local model = getConveyorModelFromInstance(hitInstance)
+	if not model or model:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) ~= true then
+		return false
+	end
+	return model ~= chosenWaterSplash
 end
 
 local function reflectDirection(incidentUnit: Vector3, surfaceNormal: Vector3): Vector3
@@ -335,6 +355,10 @@ local function start(
 			else
 				local convPart = getConveyorHitPart(inst)
 				if convPart then
+					if shouldPassThroughUnchosenSplash(inst, options.chosenWaterSplash) then
+						pos = hit.Position + dir * SPLASH_PASSTHROUGH_SEPARATION_STUDS
+						continue
+					end
 					pos = hit.Position - dir * 0.1
 					projectile.CFrame = CFrame.new(pos, pos + dir)
 					alive = false

@@ -9,6 +9,9 @@ local Debris = game:GetService("Debris")
 local HIT_FLASH_REMOTE_NAME = "AntiAirConveyorHitFlash"
 local CASH_FLY_VFX_REMOTE_NAME = "CashFlyVfx"
 local SPLASH_KILL_FISH_VFX_REMOTE_NAME = "SplashKillFishVfx"
+local SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME = "SplashKillFishPreload"
+local SplashKillFishFrames = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashKillFishFrames"))
+local SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE = SplashKillFishFrames.IMAGE_ID_ATTRIBUTE
 local Money = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Money"))
 local MatchRoundBridge = require(script.Parent:WaitForChild("MatchRoundBridge"))
 local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
@@ -30,6 +33,7 @@ end
 ensureRemoteEvent(HIT_FLASH_REMOTE_NAME)
 ensureRemoteEvent(CASH_FLY_VFX_REMOTE_NAME)
 ensureRemoteEvent(SPLASH_KILL_FISH_VFX_REMOTE_NAME)
+ensureRemoteEvent(SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME)
 
 local CONVEYOR_ITEMS_FOLDER = "ConveyorItems"
 local ACTIVE_ITEMS_FOLDER = "ConveyorActiveItems"
@@ -119,9 +123,7 @@ local WATER_SPLASH_NET_TEXTURE_ID: string? = "rbxassetid://135625585340416"
 -- Must match WaterSplashSpawner.server.luau
 local IS_WATER_SPLASH_ATTRIBUTE = "IsWaterSplash"
 local SPLASH_HIT_COLLIDER_NAME = "SplashHitCollider"
--- Splash kill: frames from ReplicatedStorage.commonsplashfishframes (StringValues, sorted by name).
-local COMMON_SPLASH_FISH_FRAMES_FOLDER = "commonsplashfishframes"
-local SPLASH_KILL_FISH_FALLBACK_IMAGE_ID = "rbxassetid://134499702905260"
+local WATER_SPLASHES_FOLDER_NAME = "WaterSplashes"
 local ANTI_AIR_MODEL_NAME = "Anti Air"
 local DEBUG_FLASH = true
 
@@ -273,51 +275,14 @@ local function spawnWorldCashPopBillboard(worldPos: Vector3, amount: number)
 	Debris:AddItem(anchor, CASH_POP_DURATION + 0.35)
 end
 
-local commonSplashFishFrameIdsCache: { string }? = nil
-local warnedMissingFishFrames = false
-
-local function getCommonSplashFishFrameIds(): { string }
-	if commonSplashFishFrameIdsCache ~= nil then
-		return commonSplashFishFrameIdsCache
+local function fireSplashKillFishPreload(player: Player?, imageId: string)
+	if not player or not player.Parent then
+		return
 	end
-	local folder = ReplicatedStorage:FindFirstChild(COMMON_SPLASH_FISH_FRAMES_FOLDER)
-	if not folder or not folder:IsA("Folder") then
-		commonSplashFishFrameIdsCache = {}
-		return commonSplashFishFrameIdsCache
+	local remote = ReplicatedStorage:FindFirstChild(SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME)
+	if remote and remote:IsA("RemoteEvent") then
+		remote:FireClient(player, imageId)
 	end
-	type FrameRow = { name: string, id: string }
-	local rows: { FrameRow } = {}
-	for _, ch in folder:GetChildren() do
-		if ch:IsA("StringValue") then
-			local v = ch.Value
-			if typeof(v) == "string" and v ~= "" then
-				table.insert(rows, { name = ch.Name, id = v })
-			end
-		end
-	end
-	table.sort(rows, function(a, b)
-		return a.name < b.name
-	end)
-	local out: { string } = {}
-	for _, r in rows do
-		table.insert(out, r.id)
-	end
-	commonSplashFishFrameIdsCache = out
-	return out
-end
-
-local function pickSplashKillFishImageId(): string
-	local frames = getCommonSplashFishFrameIds()
-	local chosen = SPLASH_KILL_FISH_FALLBACK_IMAGE_ID
-	if #frames >= 1 then
-		chosen = frames[math.random(1, #frames)]
-	elseif not warnedMissingFishFrames then
-		warnedMissingFishFrames = true
-		warn(
-			"[ConveyorSystem] commonsplashfishframes missing or empty; using fallback splash fish image"
-		)
-	end
-	return chosen
 end
 
 local function fireSplashKillFishScreenVfx(player: Player?, imageId: string, payout: number)
@@ -328,6 +293,37 @@ local function fireSplashKillFishScreenVfx(player: Player?, imageId: string, pay
 	if remote and remote:IsA("RemoteEvent") then
 		remote:FireClient(player, imageId, payout)
 	end
+end
+
+local function getSplashKillFishImageId(model: Model): string
+	local attr = model:GetAttribute(SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE)
+	if typeof(attr) == "string" and attr ~= "" then
+		return attr
+	end
+	return SplashKillFishFrames.pickImageId()
+end
+
+local function preloadActiveSplashFishForPlayer(player: Player)
+	local folder = Workspace:FindFirstChild(WATER_SPLASHES_FOLDER_NAME)
+	if not folder then
+		return
+	end
+	for _, child in folder:GetChildren() do
+		if child:IsA("Model") then
+			local imageId = child:GetAttribute(SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE)
+			if typeof(imageId) == "string" and imageId ~= "" then
+				fireSplashKillFishPreload(player, imageId)
+			end
+		end
+	end
+end
+
+local function assignAndPreloadSplashKillFishImage(model: Model, rewardPlayer: Player)
+	local imageId = getSplashKillFishImageId(model)
+	if typeof(model:GetAttribute(SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE)) ~= "string" then
+		model:SetAttribute(SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE, imageId)
+	end
+	fireSplashKillFishPreload(rewardPlayer, imageId)
 end
 
 local function getConveyorItemsFolder(): Folder?
@@ -969,6 +965,10 @@ local function applyRandomHitDamage(
 		local payout = if typeof(payoutAttr) == "number" then payoutAttr else 0
 		local isWaterSplash = model:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) == true
 
+		if isWaterSplash and rewardPlayer and rewardPlayer.Parent then
+			assignAndPreloadSplashKillFishImage(model, rewardPlayer)
+		end
+
 		local shouldReel = projectilePart ~= nil
 			and attackerPlayer ~= nil
 			and turretModel ~= nil
@@ -1013,7 +1013,7 @@ local function applyRandomHitDamage(
 					if isSplashKill then
 						fireSplashKillFishScreenVfx(
 							capturedReward,
-							pickSplashKillFishImageId(),
+							getSplashKillFishImageId(capturedModel),
 							capturedPayout
 						)
 					end
@@ -1046,7 +1046,7 @@ local function applyRandomHitDamage(
 		end
 
 		if isWaterSplash and rewardPlayer and rewardPlayer.Parent then
-			fireSplashKillFishScreenVfx(rewardPlayer, pickSplashKillFishImageId(), payout)
+			fireSplashKillFishScreenVfx(rewardPlayer, getSplashKillFishImageId(model), payout)
 		end
 
 		removeConveyorItemFromTracking(model)
@@ -1592,6 +1592,12 @@ end)
 MatchRoundBridge.setCallbacks({
 	clearFishNow = clearAllConveyorFish,
 })
+
+Players.PlayerAdded:Connect(function(player)
+	task.defer(function()
+		preloadActiveSplashFishForPlayer(player)
+	end)
+end)
 
 if CONVEYOR_ARENA_TARGETS_ENABLED then
 	task.spawn(runArenaTargetSystem)

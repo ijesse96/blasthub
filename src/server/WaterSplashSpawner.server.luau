@@ -1,7 +1,13 @@
 --!strict
+local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ServerStorage = game:GetService("ServerStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+
+local SplashKillFishFrames = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashKillFishFrames"))
+
+local SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME = "SplashKillFishPreload"
 
 local WATER_TEMPLATE_NAME = "Water"
 local TEMPLATE_HOLDER_NAME = "WaterTemplate"
@@ -45,6 +51,16 @@ local SPLASH_HEALTH_MIN = 1
 local SPLASH_HEALTH_MAX = 3
 local SPLASH_CASH_MIN = 1
 local SPLASH_CASH_MAX = 5
+
+local function fireSplashKillFishPreloadToAll(imageId: string)
+	local remote = ReplicatedStorage:FindFirstChild(SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME)
+	if not remote or not remote:IsA("RemoteEvent") then
+		return
+	end
+	for _, plr in Players:GetPlayers() do
+		remote:FireClient(plr, imageId)
+	end
+end
 
 type ArenaBounds = {
 	minX: number,
@@ -360,6 +376,9 @@ local function trySpawn(template: Instance, bounds: ArenaBounds, activeFolder: F
 			-- ConveyorSystem reads this when floating dead items to the turret; preserve our spawn scale.
 			model:SetAttribute(CONVEYOR_SCALE_ATTRIBUTE, scale)
 			model:SetAttribute(IS_WATER_SPLASH_ATTRIBUTE, true)
+			local splashFishImageId = SplashKillFishFrames.pickImageId()
+			model:SetAttribute(SplashKillFishFrames.IMAGE_ID_ATTRIBUTE, splashFishImageId)
+			fireSplashKillFishPreloadToAll(splashFishImageId)
 
 			local yaw = math.random() * math.pi * 2
 			model:PivotTo(CFrame.new(pos) * CFrame.Angles(0, yaw, 0))

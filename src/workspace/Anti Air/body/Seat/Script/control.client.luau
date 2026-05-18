@@ -119,6 +119,8 @@ local BULLET_LIFETIME_SEC = 7
 local PREDICT_RECONCILE_TIMEOUT_SEC = 0.55
 local HARPOON_RETRACT_DURATION_SEC = 0.38
 local MUZZLE_OFFSET_STUDS = 5
+-- Must match AntiAirPlayerFire.server.luau
+local MAX_AIM_DIRECTION_Y = 0.42
 local IS_WATER_SPLASH_ATTRIBUTE = "IsWaterSplash"
 local SPLASH_HIT_COLLIDER_NAME = "SplashHitCollider"
 local SPLASH_RAYCAST_MAX_DISTANCE = 2000
@@ -562,6 +564,41 @@ local function computeYawAimLookToward(worldPoint: Vector3): Vector3
 	return offset.Unit
 end
 
+local function finalizeAimLook(aimLook: Vector3, preservePitch: boolean): Vector3
+	if aimLook.Magnitude < 1e-5 then
+		return Vector3.new(0, 0, -1)
+	end
+	if not preservePitch then
+		local flatAim = Vector3.new(aimLook.X, 0, aimLook.Z)
+		if flatAim.Magnitude > 1e-5 then
+			return flatAim.Unit
+		end
+		return aimLook.Unit
+	end
+	local unit = aimLook.Unit
+	if math.abs(unit.Y) <= MAX_AIM_DIRECTION_Y then
+		return unit
+	end
+	local signY = if unit.Y > 0 then 1 else -1
+	local xz = Vector3.new(unit.X, 0, unit.Z)
+	local xzMag = xz.Magnitude
+	if xzMag < 1e-5 then
+		return Vector3.new(0, signY * MAX_AIM_DIRECTION_Y, 0).Unit
+	end
+	local xzScale = math.sqrt(math.max(0, 1 - MAX_AIM_DIRECTION_Y * MAX_AIM_DIRECTION_Y))
+	xz = xz.Unit * xzScale
+	return Vector3.new(xz.X, signY * MAX_AIM_DIRECTION_Y, xz.Z).Unit
+end
+
+local function computeAimLookTowardSplash(worldPoint: Vector3): Vector3
+	local gunPart = gun.gun.gunpart
+	local offset = worldPoint - gunPart.Position
+	if offset.Magnitude < 1e-4 then
+		return computeYawAimLookToward(worldPoint)
+	end
+	return finalizeAimLook(offset, true)
+end
+
 local function isScreenPointOverBlockingGui(screenX: number, screenY: number): boolean
 	local guiObjects = playerGui:GetGuiObjectsAtPosition(screenX, screenY)
 	for _, obj in guiObjects do
@@ -697,7 +734,12 @@ local function updateCrosshairFromBarrel()
 	end
 end
 
-local function fireOnce(forceShoot: boolean?, aimLookOverride: Vector3?)
+local function fireOnce(
+	forceShoot: boolean?,
+	aimLookOverride: Vector3?,
+	chosenSplash: Model?,
+	preservePitch: boolean?
+)
 	if not forceShoot and not shootHeld then
 		return
 	end
@@ -714,14 +756,7 @@ local function fireOnce(forceShoot: boolean?, aimLookOverride: Vector3?)
 	if not aimLook or aimLook.Magnitude < 1e-5 then
 		aimLook = gunPart.CFrame.LookVector
 	end
-	local flatAim = Vector3.new(aimLook.X, 0, aimLook.Z)
-	if flatAim.Magnitude > 1e-5 then
-		aimLook = flatAim.Unit
-	elseif aimLook.Magnitude > 1e-5 then
-		aimLook = aimLook.Unit
-	else
-		aimLook = Vector3.new(0, 0, -1)
-	end
+	aimLook = finalizeAimLook(aimLook, preservePitch == true)
 	local spawnPosition = gunPart.Position + (aimLook * MUZZLE_OFFSET_STUDS)
 
 	-- Local prediction: instant tracer for the shooter only; removed when the server projectile replicates in.
@@ -750,6 +785,7 @@ local function fireOnce(forceShoot: boolean?, aimLookOverride: Vector3?)
 		speed = BULLET_SPEED,
 		maxLifetimeSeconds = BULLET_LIFETIME_SEC,
 		raycastExclude = rayExclude,
+		chosenWaterSplash = chosenSplash,
 		onConveyorHit = function(_hitPart: BasePart)
 			return nil
 		end,
@@ -778,7 +814,7 @@ local function fireOnce(forceShoot: boolean?, aimLookOverride: Vector3?)
 	end)
 
 	if fireRemote and fireRemote:IsA("RemoteEvent") then
-		fireRemote:FireServer(spawnPosition, aimLook, shotSeq)
+		fireRemote:FireServer(spawnPosition, aimLook, shotSeq, chosenSplash)
 	end
 	debugLog("Shot requested (server-spawned projectile + local predict)")
 	spawn(function()
@@ -903,7 +939,8 @@ local function fireAtWorldPoint(
 	aimLookOverride: Vector3?,
 	screenX: number?,
 	screenY: number?,
-	isSplash: boolean?
+	isSplash: boolean?,
+	chosenSplash: Model?
 )
 	if typeof(screenX) == "number" and typeof(screenY) == "number" then
 		playPressFeedback(screenX, screenY, worldPoint, isSplash == true)
@@ -911,10 +948,17 @@ local function fireAtWorldPoint(
 		playPressFeedback(nil, nil, worldPoint, isSplash == true)
 	end
 	applyTurretAimTowardWorld(worldPoint)
-	local aimLook = aimLookOverride or computeYawAimLookToward(worldPoint)
+	local aimLook = aimLookOverride
+	if not aimLook then
+		if chosenSplash then
+			aimLook = computeAimLookTowardSplash(worldPoint)
+		else
+			aimLook = computeYawAimLookToward(worldPoint)
+		end
+	end
 	local prevShootHeld = shootHeld
 	shootHeld = true
-	fireOnce(true, aimLook)
+	fireOnce(true, aimLook, chosenSplash, chosenSplash ~= nil)
 	shootHeld = prevShootHeld
 end
 
@@ -926,8 +970,8 @@ local function tryPressSplashButton(screenX: number, screenY: number): boolean
 	if isScreenPointOverBlockingGui(screenX, screenY) then
 		return false
 	end
-	local _, splashPoint = pickWaterSplashAtScreen(screenX, screenY)
-	if not splashPoint then
+	local splashModel, splashPoint = pickWaterSplashAtScreen(screenX, screenY)
+	if not splashModel or not splashPoint then
 		return false
 	end
 	if not canShootByMatchRoundState() then
@@ -936,7 +980,14 @@ local function tryPressSplashButton(screenX: number, screenY: number): boolean
 	if playerHasBlockingHarpoonShot() then
 		return false
 	end
-	fireAtWorldPoint(splashPoint, computeYawAimLookToward(splashPoint), screenX, screenY, true)
+	fireAtWorldPoint(
+		splashPoint,
+		computeAimLookTowardSplash(splashPoint),
+		screenX,
+		screenY,
+		true,
+		splashModel
+	)
 	return true
 end
 
@@ -954,7 +1005,7 @@ local function tryArenaSkyFireFromScreen(screenX: number, screenY: number): bool
 	if playerHasBlockingHarpoonShot() then
 		return false
 	end
-	local _, splashPoint = pickWaterSplashAtScreen(screenX, screenY)
+	local splashModel, splashPoint = pickWaterSplashAtScreen(screenX, screenY)
 	local worldPoint = splashPoint
 	if not worldPoint then
 		worldPoint = getHorizontalPlanePointFromScreen(screenX, screenY, getArenaFloorY())
@@ -962,8 +1013,11 @@ local function tryArenaSkyFireFromScreen(screenX: number, screenY: number): bool
 	if not worldPoint then
 		return false
 	end
-	local isSplash = splashPoint ~= nil
-	fireAtWorldPoint(worldPoint, computeYawAimLookToward(worldPoint), screenX, screenY, isSplash)
+	local isSplash = splashModel ~= nil
+	local aimLook = if splashModel
+		then computeAimLookTowardSplash(worldPoint)
+		else computeYawAimLookToward(worldPoint)
+	fireAtWorldPoint(worldPoint, aimLook, screenX, screenY, isSplash, splashModel)
 	return true
 end
 
