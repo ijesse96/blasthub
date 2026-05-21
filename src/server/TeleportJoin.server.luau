@@ -1,4 +1,7 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local ACTIVE_MAP_ID_NAME = "ActiveMapId"
 
 -- Optional hook for arrivals from the lobby (or any TeleportService teleport).
 -- `player:GetJoinData().TeleportData` is set from the lobby via TeleportOptions.
@@ -30,7 +33,10 @@ Players.PlayerAdded:Connect(function(player: Player)
 		end
 	end
 
-	if kind == "match" then
-		-- Extend here (spawn location, welcome UI, analytics, etc.).
+	if kind == "match" and mapId then
+		local active = ReplicatedStorage:FindFirstChild(ACTIVE_MAP_ID_NAME)
+		if active and active:IsA("StringValue") then
+			active.Value = mapId
+		end
 	end
 end)

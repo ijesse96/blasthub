@@ -12,6 +12,7 @@ local SPLASH_KILL_FISH_VFX_REMOTE_NAME = "SplashKillFishVfx"
 local SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME = "SplashKillFishPreload"
 local SplashKillFishFrames = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashKillFishFrames"))
 local SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE = SplashKillFishFrames.IMAGE_ID_ATTRIBUTE
+local SPLASH_KILL_FISH_RARITY_ATTRIBUTE = SplashKillFishFrames.RARITY_ATTRIBUTE
 local Money = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Money"))
 local MatchRoundBridge = require(script.Parent:WaitForChild("MatchRoundBridge"))
 local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
@@ -285,13 +286,16 @@ local function fireSplashKillFishPreload(player: Player?, imageId: string)
 	end
 end
 
-local function fireSplashKillFishScreenVfx(player: Player?, imageId: string, payout: number)
+local SPLASH_KILL_FISH_VFX_PHASE_PREPARE = "prepare"
+local SPLASH_KILL_FISH_VFX_PHASE_REVEAL = "reveal"
+
+local function fireSplashKillFishVfxPhase(player: Player?, imageId: string, payout: number, phase: string)
 	if not player or not player.Parent then
 		return
 	end
 	local remote = ReplicatedStorage:FindFirstChild(SPLASH_KILL_FISH_VFX_REMOTE_NAME)
 	if remote and remote:IsA("RemoteEvent") then
-		remote:FireClient(player, imageId, payout)
+		remote:FireClient(player, imageId, payout, phase)
 	end
 end
 
@@ -318,12 +322,40 @@ local function preloadActiveSplashFishForPlayer(player: Player)
 	end
 end
 
-local function assignAndPreloadSplashKillFishImage(model: Model, rewardPlayer: Player)
+local function getSplashKillFishPayout(model: Model): number
+	local payoutAttr = model:GetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE)
+	return if typeof(payoutAttr) == "number" then payoutAttr else 0
+end
+
+local function assignAndPrepareSplashKillFishVfx(model: Model, rewardPlayer: Player)
 	local imageId = getSplashKillFishImageId(model)
 	if typeof(model:GetAttribute(SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE)) ~= "string" then
 		model:SetAttribute(SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE, imageId)
+		model:SetAttribute(SPLASH_KILL_FISH_RARITY_ATTRIBUTE, SplashKillFishFrames.DEFAULT_TIER)
 	end
-	fireSplashKillFishPreload(rewardPlayer, imageId)
+	fireSplashKillFishVfxPhase(rewardPlayer, imageId, getSplashKillFishPayout(model), SPLASH_KILL_FISH_VFX_PHASE_PREPARE)
+end
+
+local function finishSplashKillAtTurret(rewardPlayer: Player?, model: Model, payout: number)
+	if rewardPlayer and rewardPlayer.Parent and payout > 0 then
+		Money.addCash(rewardPlayer, payout)
+		MatchRoundBridge.recordCoinWon(rewardPlayer, payout)
+	end
+	if rewardPlayer and rewardPlayer.Parent then
+		fireSplashKillFishVfxPhase(
+			rewardPlayer,
+			getSplashKillFishImageId(model),
+			payout,
+			SPLASH_KILL_FISH_VFX_PHASE_REVEAL
+		)
+	end
+	local fishNet = model:FindFirstChild(HIT_FISH_NET_FOLDER_NAME)
+	if fishNet then
+		fishNet:Destroy()
+	end
+	if model.Parent then
+		model:Destroy()
+	end
 end
 
 local function getConveyorItemsFolder(): Folder?
@@ -621,9 +653,13 @@ local function getTurretBillboardWorldPosition(turretModel: Model): Vector3?
 	return anyPart and (anyPart.Position + Vector3.new(0, TURRET_FLOAT_GOAL_HEIGHT, 0)) or nil
 end
 
-local function floatConveyorModelTowardTurret(model: Model, turretModel: Model)
+local function floatConveyorModelTowardTurret(model: Model, turretModel: Model, onArrived: (() -> ())?)
 	if not turretModel.Parent then
-		model:Destroy()
+		if onArrived then
+			onArrived()
+		elseif model.Parent then
+			model:Destroy()
+		end
 		return
 	end
 
@@ -664,7 +700,11 @@ local function floatConveyorModelTowardTurret(model: Model, turretModel: Model)
 			model:PivotTo(CFrame.new(newPos) * CFrame.Angles(sx, sy, sz))
 		end
 
-		if model.Parent then
+		if onArrived then
+			if model.Parent then
+				onArrived()
+			end
+		elseif model.Parent then
 			model:Destroy()
 		end
 	end)
@@ -966,7 +1006,7 @@ local function applyRandomHitDamage(
 		local isWaterSplash = model:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) == true
 
 		if isWaterSplash and rewardPlayer and rewardPlayer.Parent then
-			assignAndPreloadSplashKillFishImage(model, rewardPlayer)
+			assignAndPrepareSplashKillFishVfx(model, rewardPlayer)
 		end
 
 		local shouldReel = projectilePart ~= nil
@@ -990,32 +1030,25 @@ local function applyRandomHitDamage(
 				retractFollowOffset = CFrame.new(0, 1.25, -14),
 				deferSplashReelMeter = isWaterSplash,
 				onRetractComplete = function()
+					local isSplashKill = capturedModel:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) == true
+					if isSplashKill then
+						finishSplashKillAtTurret(capturedReward, capturedModel, capturedPayout)
+						return
+					end
 					local payPos = getTurretBillboardWorldPosition(capturedTurret)
 					if not payPos then
 						payPos = capturedTurret:GetPivot().Position + Vector3.new(0, TURRET_FLOAT_GOAL_HEIGHT, 0)
 					end
-					local isSplashKill = capturedModel:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) == true
 					if capturedPayout > 0 then
-						if not isSplashKill then
-							spawnWorldCashPopBillboard(payPos, capturedPayout)
-						end
+						spawnWorldCashPopBillboard(payPos, capturedPayout)
 						if capturedReward and capturedReward.Parent then
 							Money.addCash(capturedReward, capturedPayout)
 							MatchRoundBridge.recordCoinWon(capturedReward, capturedPayout)
-							if not isSplashKill then
-								local flyRemote = ReplicatedStorage:FindFirstChild(CASH_FLY_VFX_REMOTE_NAME)
-								if flyRemote and flyRemote:IsA("RemoteEvent") then
-									flyRemote:FireClient(capturedReward, payPos, capturedPayout)
-								end
+							local flyRemote = ReplicatedStorage:FindFirstChild(CASH_FLY_VFX_REMOTE_NAME)
+							if flyRemote and flyRemote:IsA("RemoteEvent") then
+								flyRemote:FireClient(capturedReward, payPos, capturedPayout)
 							end
 						end
-					end
-					if isSplashKill then
-						fireSplashKillFishScreenVfx(
-							capturedReward,
-							getSplashKillFishImageId(capturedModel),
-							capturedPayout
-						)
 					end
 					local fishNet = capturedModel:FindFirstChild(HIT_FISH_NET_FOLDER_NAME)
 					if fishNet then
@@ -1028,31 +1061,35 @@ local function applyRandomHitDamage(
 			}
 		end
 
-		if payout > 0 then
+		if payout > 0 and not isWaterSplash then
 			local worldPos = model:GetPivot().Position
-			if not isWaterSplash then
-				spawnWorldCashPopBillboard(worldPos, payout)
-			end
+			spawnWorldCashPopBillboard(worldPos, payout)
 			if rewardPlayer then
 				Money.addCash(rewardPlayer, payout)
 				MatchRoundBridge.recordCoinWon(rewardPlayer, payout)
-				if not isWaterSplash then
-					local flyRemote = ReplicatedStorage:FindFirstChild(CASH_FLY_VFX_REMOTE_NAME)
-					if flyRemote and flyRemote:IsA("RemoteEvent") then
-						flyRemote:FireClient(rewardPlayer, worldPos, payout)
-					end
+				local flyRemote = ReplicatedStorage:FindFirstChild(CASH_FLY_VFX_REMOTE_NAME)
+				if flyRemote and flyRemote:IsA("RemoteEvent") then
+					flyRemote:FireClient(rewardPlayer, worldPos, payout)
 				end
 			end
-		end
-
-		if isWaterSplash and rewardPlayer and rewardPlayer.Parent then
-			fireSplashKillFishScreenVfx(rewardPlayer, getSplashKillFishImageId(model), payout)
 		end
 
 		removeConveyorItemFromTracking(model)
 		model:SetAttribute(CONVEYOR_ITEM_ATTRIBUTE, nil)
 
-		if turretModel and turretModel.Parent then
+		if isWaterSplash and rewardPlayer and rewardPlayer.Parent then
+			model.Parent = getOrCreateDeathVfxFolder()
+			if turretModel and turretModel.Parent then
+				local capturedReward = rewardPlayer
+				local capturedModel = model
+				local capturedPayout = payout
+				floatConveyorModelTowardTurret(model, turretModel, function()
+					finishSplashKillAtTurret(capturedReward, capturedModel, capturedPayout)
+				end)
+			else
+				finishSplashKillAtTurret(rewardPlayer, model, payout)
+			end
+		elseif turretModel and turretModel.Parent then
 			model.Parent = getOrCreateDeathVfxFolder()
 			floatConveyorModelTowardTurret(model, turretModel)
 		else

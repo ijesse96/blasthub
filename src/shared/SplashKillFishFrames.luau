@@ -1,59 +1,76 @@
 --!strict
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local FRAMES_FOLDER_NAME = "commonsplashfishframes"
-local FALLBACK_IMAGE_ID = "rbxassetid://134499702905260"
+local SplashFishCatalog = require(script.Parent:WaitForChild("SplashFishCatalog"))
+
+export type FishTier = SplashFishCatalog.FishTier
+
+local DEFAULT_MAP_ID = "main"
+local ACTIVE_MAP_ID_NAME = "ActiveMapId"
+local FALLBACK_IMAGE_ID = "rbxassetid://72177555306292"
 local IMAGE_ID_ATTRIBUTE = "SplashKillFishImageId"
+local RARITY_ATTRIBUTE = "SplashKillFishRarity"
+-- Deprecated: atlas frame index; kept for old models, ignored by client VFX.
+local FRAME_INDEX_ATTRIBUTE = "SplashKillFishFrameIndex"
 
-local frameIdsCache: { string }? = nil
-local warnedMissingFrames = false
+local DEFAULT_TIER: FishTier = "common"
 
-local function getFrameIds(): { string }
-	if frameIdsCache ~= nil then
-		return frameIdsCache
+local function getActiveMapId(): string
+	local ch = ReplicatedStorage:FindFirstChild(ACTIVE_MAP_ID_NAME)
+	if ch and ch:IsA("StringValue") and ch.Value ~= "" then
+		return ch.Value
 	end
-	local folder = ReplicatedStorage:FindFirstChild(FRAMES_FOLDER_NAME)
-	if not folder then
-		frameIdsCache = {}
-		return frameIdsCache
-	end
-	type FrameRow = { name: string, id: string }
-	local rows: { FrameRow } = {}
-	for _, ch in folder:GetChildren() do
-		if ch:IsA("StringValue") then
-			local v = ch.Value
-			if typeof(v) == "string" and v ~= "" then
-				table.insert(rows, { name = ch.Name, id = v })
-			end
-		end
-	end
-	table.sort(rows, function(a, b)
-		return a.name < b.name
-	end)
-	local out: { string } = {}
-	for _, r in rows do
-		table.insert(out, r.id)
-	end
-	frameIdsCache = out
-	return out
+	return DEFAULT_MAP_ID
 end
 
-local function pickImageId(): string
-	local frames = getFrameIds()
-	if #frames >= 1 then
-		return frames[math.random(1, #frames)]
+local function getTierList(mapId: string, tier: FishTier): { string }
+	local ids = SplashFishCatalog.getIdsForTier(mapId, tier)
+	if #ids > 0 then
+		return ids
 	end
-	if not warnedMissingFrames then
-		warnedMissingFrames = true
-		warn("[SplashKillFishFrames] commonsplashfishframes missing or empty; using fallback")
+	if tier ~= DEFAULT_TIER then
+		return SplashFishCatalog.getIdsForTier(mapId, DEFAULT_TIER)
 	end
-	return FALLBACK_IMAGE_ID
+	return {}
+end
+
+local function pickFromList(ids: { string }): string
+	if #ids == 0 then
+		return FALLBACK_IMAGE_ID
+	end
+	return ids[math.random(1, #ids)]
+end
+
+local function getFrameIds(): { string }
+	return SplashFishCatalog.getAllIdsForMap(getActiveMapId())
+end
+
+local function pickImageId(tier: FishTier?): string
+	local mapId = getActiveMapId()
+	local resolvedTier = tier or DEFAULT_TIER
+	return pickFromList(getTierList(mapId, resolvedTier))
+end
+
+local function getFrameCount(): number
+	return #getFrameIds()
+end
+
+local function applyFullImageToLabel(label: ImageLabel)
+	label.ImageRectOffset = Vector2.zero
+	label.ImageRectSize = Vector2.zero
 end
 
 return {
-	FRAMES_FOLDER_NAME = FRAMES_FOLDER_NAME,
+	DEFAULT_MAP_ID = DEFAULT_MAP_ID,
+	ACTIVE_MAP_ID_NAME = ACTIVE_MAP_ID_NAME,
 	FALLBACK_IMAGE_ID = FALLBACK_IMAGE_ID,
 	IMAGE_ID_ATTRIBUTE = IMAGE_ID_ATTRIBUTE,
+	RARITY_ATTRIBUTE = RARITY_ATTRIBUTE,
+	FRAME_INDEX_ATTRIBUTE = FRAME_INDEX_ATTRIBUTE,
+	DEFAULT_TIER = DEFAULT_TIER,
+	getActiveMapId = getActiveMapId,
 	getFrameIds = getFrameIds,
 	pickImageId = pickImageId,
+	getFrameCount = getFrameCount,
+	applyFullImageToLabel = applyFullImageToLabel,
 }

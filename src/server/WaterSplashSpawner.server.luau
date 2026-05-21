@@ -378,6 +378,7 @@ local function trySpawn(template: Instance, bounds: ArenaBounds, activeFolder: F
 			model:SetAttribute(IS_WATER_SPLASH_ATTRIBUTE, true)
 			local splashFishImageId = SplashKillFishFrames.pickImageId()
 			model:SetAttribute(SplashKillFishFrames.IMAGE_ID_ATTRIBUTE, splashFishImageId)
+			model:SetAttribute(SplashKillFishFrames.RARITY_ATTRIBUTE, SplashKillFishFrames.DEFAULT_TIER)
 			fireSplashKillFishPreloadToAll(splashFishImageId)
 
 			local yaw = math.random() * math.pi * 2

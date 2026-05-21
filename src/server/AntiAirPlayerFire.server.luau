@@ -15,6 +15,8 @@ local MatchRoundBridge = require(script.Parent:WaitForChild("MatchRoundBridge"))
 local FIRE_REMOTE_NAME = "AntiAirPlayerFire"
 local SPLASH_REEL_TAP_REMOTE_NAME = "AntiAirSplashReelTap"
 local SPLASH_REEL_METER_REMOTE_NAME = "AntiAirSplashReelMeterState"
+local SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME = "SplashKillFishPreload"
+local SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE = "SplashKillFishImageId"
 
 local BULLET_SPEED = 280
 local BULLET_LIFETIME_SEC = 7
@@ -183,6 +185,16 @@ local function completeSplashSession(player: Player, session: SplashMeterSession
 	end
 	pendingSplashByUserId[player.UserId] = nil
 	splashReelMeterRemote:FireClient(player, false, 0)
+	local followModel = session.merge.retractFollowModel
+	if followModel and followModel:IsA("Model") then
+		local imageId = followModel:GetAttribute(SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE)
+		if typeof(imageId) == "string" and imageId ~= "" then
+			local preloadRemote = ReplicatedStorage:FindFirstChild(SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME)
+			if preloadRemote and preloadRemote:IsA("RemoteEvent") then
+				preloadRemote:FireClient(player, imageId)
+			end
+		end
+	end
 	Ricochet.beginDeferredRetract(session.projectile)
 end
 
