@@ -16,6 +16,7 @@ local SplashReelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitFo
 local SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE = SplashKillFishFrames.IMAGE_ID_ATTRIBUTE
 local SPLASH_KILL_FISH_RARITY_ATTRIBUTE = SplashKillFishFrames.RARITY_ATTRIBUTE
 local Money = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Money"))
+local FishCollectionService = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("FishCollectionService"))
 local MatchRoundBridge = require(script.Parent:WaitForChild("MatchRoundBridge"))
 local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
 
@@ -292,13 +293,23 @@ end
 local SPLASH_KILL_FISH_VFX_PHASE_PREPARE = "prepare"
 local SPLASH_KILL_FISH_VFX_PHASE_REVEAL = "reveal"
 
-local function fireSplashKillFishVfxPhase(player: Player?, imageId: string, payout: number, phase: string)
+local function fireSplashKillFishVfxPhase(
+	player: Player?,
+	imageId: string,
+	payout: number,
+	phase: string,
+	showWave: boolean?
+)
 	if not player or not player.Parent then
 		return
 	end
 	local remote = ReplicatedStorage:FindFirstChild(SPLASH_KILL_FISH_VFX_REMOTE_NAME)
 	if remote and remote:IsA("RemoteEvent") then
-		remote:FireClient(player, imageId, payout, phase)
+		if showWave == nil then
+			remote:FireClient(player, imageId, payout, phase)
+		else
+			remote:FireClient(player, imageId, payout, phase, showWave)
+		end
 	end
 end
 
@@ -360,11 +371,15 @@ local function finishSplashKillAtTurret(rewardPlayer: Player?, model: Model, pay
 		MatchRoundBridge.recordCoinWon(rewardPlayer, payout)
 	end
 	if rewardPlayer and rewardPlayer.Parent then
+		local imageId = getSplashKillFishImageId(model)
+		local mapId = SplashKillFishFrames.getActiveMapId()
+		local _ok, _newCount, wasFirstDiscovery = FishCollectionService.grantFishToPlayer(rewardPlayer, mapId, imageId)
 		fireSplashKillFishVfxPhase(
 			rewardPlayer,
-			getSplashKillFishImageId(model),
+			imageId,
 			payout,
-			SPLASH_KILL_FISH_VFX_PHASE_REVEAL
+			SPLASH_KILL_FISH_VFX_PHASE_REVEAL,
+			wasFirstDiscovery
 		)
 	end
 	local fishNet = model:FindFirstChild(HIT_FISH_NET_FOLDER_NAME)

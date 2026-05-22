@@ -31,17 +31,9 @@ local CARD_H = 130
 local CARD_PAD = 8
 local GRID_COLUMNS = 5
 
--- DEV: replace with server snapshot when FishCollectionStore exists.
-local MOCK_OWNED: { [string]: { [string]: number } } = {
-	main = {
-		["rbxassetid://72177555306292"] = 2,
-		["rbxassetid://122269752750112"] = 1,
-		["rbxassetid://125480584426747"] = 1,
-		["rbxassetid://105490197665891"] = 3,
-		["rbxassetid://111162978627012"] = 1,
-		["rbxassetid://87992282626603"] = 1,
-	},
-}
+type OwnedByMap = { [string]: { [string]: number } }
+
+local ownedByMap: OwnedByMap = {}
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -186,8 +178,30 @@ footer.Parent = panel
 
 local mapTabsById: { [string]: TextButton } = {}
 
+local function sanitizeOwnedSnapshot(raw: unknown): OwnedByMap
+	if typeof(raw) ~= "table" then
+		return {}
+	end
+	local out: OwnedByMap = {}
+	for mapId, mapData in raw :: { [string]: any } do
+		if typeof(mapId) ~= "string" or typeof(mapData) ~= "table" then
+			continue
+		end
+		local owned: { [string]: number } = {}
+		for imageId, count in mapData do
+			if typeof(imageId) == "string" and typeof(count) == "number" and count > 0 then
+				owned[imageId] = math.floor(count)
+			end
+		end
+		if next(owned) ~= nil then
+			out[mapId] = owned
+		end
+	end
+	return out
+end
+
 local function getOwnedForMap(mapId: string): { [string]: number }
-	return MOCK_OWNED[mapId] or {}
+	return ownedByMap[mapId] or {}
 end
 
 local function countOwnedInMap(mapId: string): number
@@ -385,6 +399,13 @@ local function renderCollection()
 	refreshMapTabs()
 end
 
+local function applyOwnedSnapshot(snapshot: unknown)
+	ownedByMap = sanitizeOwnedSnapshot(snapshot)
+	if panelOpen then
+		renderCollection()
+	end
+end
+
 local function buildMapTabs()
 	for _, tab in mapTabsById do
 		tab:Destroy()
@@ -441,6 +462,15 @@ end)
 closeButton.MouseButton1Click:Connect(function()
 	setPanelOpen(false)
 end)
+
+local snapshotRemote = ReplicatedStorage:WaitForChild("FishCollectionSnapshot", 60)
+if snapshotRemote and snapshotRemote:IsA("RemoteEvent") then
+	snapshotRemote.OnClientEvent:Connect(function(snapshot: unknown)
+		applyOwnedSnapshot(snapshot)
+	end)
+else
+	warn("[FishCollectionInventory] Missing RemoteEvent FishCollectionSnapshot")
+end
 
 buildMapTabs()
 renderCollection()
