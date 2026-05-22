@@ -7,10 +7,12 @@ local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
 
 local HIT_FLASH_REMOTE_NAME = "AntiAirConveyorHitFlash"
+local HIT_FLASH_VFX_REMOTE_NAME = "AntiAirConveyorHitFlashVfx"
 local CASH_FLY_VFX_REMOTE_NAME = "CashFlyVfx"
 local SPLASH_KILL_FISH_VFX_REMOTE_NAME = "SplashKillFishVfx"
 local SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME = "SplashKillFishPreload"
 local SplashKillFishFrames = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashKillFishFrames"))
+local SplashReelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirSplashReelConfig"))
 local SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE = SplashKillFishFrames.IMAGE_ID_ATTRIBUTE
 local SPLASH_KILL_FISH_RARITY_ATTRIBUTE = SplashKillFishFrames.RARITY_ATTRIBUTE
 local Money = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Money"))
@@ -32,6 +34,7 @@ local function ensureRemoteEvent(name: string)
 end
 
 ensureRemoteEvent(HIT_FLASH_REMOTE_NAME)
+ensureRemoteEvent(HIT_FLASH_VFX_REMOTE_NAME)
 ensureRemoteEvent(CASH_FLY_VFX_REMOTE_NAME)
 ensureRemoteEvent(SPLASH_KILL_FISH_VFX_REMOTE_NAME)
 ensureRemoteEvent(SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME)
@@ -304,7 +307,26 @@ local function getSplashKillFishImageId(model: Model): string
 	if typeof(attr) == "string" and attr ~= "" then
 		return attr
 	end
-	return SplashKillFishFrames.pickImageId()
+	local imageId, _tier = SplashKillFishFrames.pickGameplayFish()
+	return imageId
+end
+
+local function ensureSplashKillFishAttributes(model: Model): (string, string)
+	local imageAttr = model:GetAttribute(SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE)
+	if typeof(imageAttr) == "string" and imageAttr ~= "" then
+		local imageId = imageAttr
+		local rarityAttr = model:GetAttribute(SPLASH_KILL_FISH_RARITY_ATTRIBUTE)
+		if typeof(rarityAttr) == "string" and rarityAttr ~= "" then
+			return imageId, rarityAttr
+		end
+		local tier = SplashKillFishFrames.inferTierForImageId(imageId)
+		model:SetAttribute(SPLASH_KILL_FISH_RARITY_ATTRIBUTE, tier)
+		return imageId, tier
+	end
+	local imageId, tier = SplashKillFishFrames.pickGameplayFish()
+	model:SetAttribute(SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE, imageId)
+	model:SetAttribute(SPLASH_KILL_FISH_RARITY_ATTRIBUTE, tier)
+	return imageId, tier
 end
 
 local function preloadActiveSplashFishForPlayer(player: Player)
@@ -328,11 +350,7 @@ local function getSplashKillFishPayout(model: Model): number
 end
 
 local function assignAndPrepareSplashKillFishVfx(model: Model, rewardPlayer: Player)
-	local imageId = getSplashKillFishImageId(model)
-	if typeof(model:GetAttribute(SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE)) ~= "string" then
-		model:SetAttribute(SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE, imageId)
-		model:SetAttribute(SPLASH_KILL_FISH_RARITY_ATTRIBUTE, SplashKillFishFrames.DEFAULT_TIER)
-	end
+	local imageId, _tier = ensureSplashKillFishAttributes(model)
 	fireSplashKillFishVfxPhase(rewardPlayer, imageId, getSplashKillFishPayout(model), SPLASH_KILL_FISH_VFX_PHASE_PREPARE)
 end
 
@@ -387,6 +405,18 @@ local function getOrCreateHitFlashRemote(): RemoteEvent
 
 	local remote = Instance.new("RemoteEvent")
 	remote.Name = HIT_FLASH_REMOTE_NAME
+	remote.Parent = ReplicatedStorage
+	return remote
+end
+
+local function getOrCreateHitFlashVfxRemote(): RemoteEvent
+	local existing = ReplicatedStorage:FindFirstChild(HIT_FLASH_VFX_REMOTE_NAME)
+	if existing and existing:IsA("RemoteEvent") then
+		return existing
+	end
+
+	local remote = Instance.new("RemoteEvent")
+	remote.Name = HIT_FLASH_VFX_REMOTE_NAME
 	remote.Parent = ReplicatedStorage
 	return remote
 end
@@ -1028,7 +1058,7 @@ local function applyRandomHitDamage(
 				retractDuration = HARPOON_REEL_KILL_DURATION_SEC,
 				retractFollowModel = model,
 				retractFollowOffset = CFrame.new(0, 1.25, -14),
-				deferSplashReelMeter = isWaterSplash,
+				deferSplashReelMeter = isWaterSplash and SplashReelConfig.TAP_TO_REEL_ENABLED,
 				onRetractComplete = function()
 					local isSplashKill = capturedModel:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) == true
 					if isSplashKill then
@@ -1615,6 +1645,38 @@ hitFlashRemote.OnServerEvent:Connect(function(player, hitInstance)
 
 	debugLog("Resolved conveyor model", hitModel:GetFullName())
 	onConveyorAntiAirHit(hitModel, player, nil)
+end)
+
+local hitFlashVfxRemote = getOrCreateHitFlashVfxRemote()
+
+hitFlashVfxRemote.OnServerEvent:Connect(function(player, hitInstance)
+	debugLog(
+		"Vfx remote received",
+		"player=",
+		player and player.Name or "nil",
+		"instance=",
+		(typeof(hitInstance) == "Instance" and hitInstance:GetFullName()) or tostring(hitInstance)
+	)
+
+	if typeof(hitInstance) ~= "Instance" then
+		debugLog("Vfx rejected: argument is not an Instance")
+		return
+	end
+
+	local hitModel = getConveyorItemModelFromInstance(hitInstance)
+	if not hitModel then
+		debugLog("Vfx rejected: no conveyor item model found in ancestors")
+		return
+	end
+
+	if player and not MatchRoundBridge.allowShooting(player) then
+		return
+	end
+
+	if hitModel.Parent then
+		debugLog("Vfx flash only", hitModel:GetFullName())
+		flashModelRed(hitModel, false)
+	end
 end)
 
 ConveyorAntiAirBridge.setProjectileConveyorHitHandler(function(model: Model, projectile: BasePart, shooter: Player?)

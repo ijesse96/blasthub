@@ -379,41 +379,6 @@ local function disableSkyView()
 	end
 end
 
-local playerGui = player:WaitForChild("PlayerGui")
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "ArenaSkyCamGui"
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 45
-screenGui.Parent = playerGui
-
-local button = Instance.new("TextButton")
-button.Name = "SkyViewToggle"
-button.AnchorPoint = Vector2.new(1, 1)
-button.Position = UDim2.new(1, -16, 1, -16)
-button.Size = UDim2.fromOffset(120, 36)
-button.BackgroundColor3 = Color3.fromRGB(28, 32, 40)
-button.BackgroundTransparency = 0.15
-button.BorderSizePixel = 0
-button.Font = Enum.Font.GothamBold
-button.TextSize = 16
-button.TextColor3 = Color3.fromRGB(220, 235, 255)
-button.Text = "Sky view"
-button.AutoButtonColor = true
-button.Parent = screenGui
-
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = button
-
-local function refreshButtonLabel()
-	if skyViewActive then
-		button.Text = "Close view"
-	else
-		button.Text = "Sky view"
-	end
-end
-
 local function toggleSkyView()
 	local map = Workspace:FindFirstChild(MAP_FOLDER_NAME)
 	if not map then
@@ -426,8 +391,6 @@ local function toggleSkyView()
 	else
 		enableSkyView(map)
 	end
-
-	refreshButtonLabel()
 end
 
 local function onBoundAction(_actionName: string, inputState: Enum.UserInputState, _inputObject: InputObject): Enum.ContextActionResult
@@ -443,17 +406,9 @@ end
 
 ContextActionService:BindAction(ACTION_NAME, onBoundAction, true, TOGGLE_KEY)
 
-button.MouseButton1Click:Connect(function()
-	if UserInputService:GetFocusedTextBox() ~= nil then
-		return
-	end
-	toggleSkyView()
-end)
-
 player.CharacterRemoving:Connect(function()
 	if skyViewActive then
 		disableSkyView()
-		refreshButtonLabel()
 	end
 end)
 
@@ -476,5 +431,4 @@ task.defer(function()
 		return
 	end
 	enableSkyView(map)
-	refreshButtonLabel()
 end)

@@ -42,7 +42,23 @@ local function pickFromList(ids: { string }): string
 end
 
 local function getFrameIds(): { string }
-	return SplashFishCatalog.getAllIdsForMap(getActiveMapId())
+	return SplashFishCatalog.getSpawnableIdsForMap(getActiveMapId())
+end
+
+local function inferTierForImageId(imageId: string, mapId: string?): FishTier
+	local resolvedMapId = mapId or getActiveMapId()
+	return SplashFishCatalog.getTierForImageId(resolvedMapId, imageId) or DEFAULT_TIER
+end
+
+local function pickGameplayImageId(mapId: string?): string
+	local resolvedMapId = mapId or getActiveMapId()
+	return pickFromList(SplashFishCatalog.getSpawnableIdsForMap(resolvedMapId))
+end
+
+local function pickGameplayFish(mapId: string?): (string, FishTier)
+	local imageId = pickGameplayImageId(mapId)
+	local tier = inferTierForImageId(imageId, mapId)
+	return imageId, tier
 end
 
 local function pickImageId(tier: FishTier?): string
@@ -70,6 +86,9 @@ return {
 	DEFAULT_TIER = DEFAULT_TIER,
 	getActiveMapId = getActiveMapId,
 	getFrameIds = getFrameIds,
+	inferTierForImageId = inferTierForImageId,
+	pickGameplayImageId = pickGameplayImageId,
+	pickGameplayFish = pickGameplayFish,
 	pickImageId = pickImageId,
 	getFrameCount = getFrameCount,
 	applyFullImageToLabel = applyFullImageToLabel,

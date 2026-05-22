@@ -4,11 +4,19 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ContentProvider = game:GetService("ContentProvider")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
-local Debris = game:GetService("Debris")
 
 local RewardUiColors = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RewardUiColors"))
 local CashFlyVfxUtil = require(script.Parent:WaitForChild("CashFlyVfxUtil"))
+local SplashFishCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashFishCatalog"))
 local SplashKillFishFrames = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashKillFishFrames"))
+
+type FishTier = SplashFishCatalog.FishTier
+
+type TierAccentColors = {
+	stroke: Color3,
+	glow: Color3,
+	glowBright: Color3,
+}
 
 local SPLASH_KILL_FISH_VFX_REMOTE_NAME = "SplashKillFishVfx"
 local SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME = "SplashKillFishPreload"
@@ -18,8 +26,29 @@ local DISPLAY_SEC = 1.4
 local IMAGE_PX = 100
 local PANEL_BG_COLOR = Color3.fromRGB(0, 0, 0)
 
-local REWARD_GREEN = RewardUiColors.PROFIT_GREEN
-local REWARD_GREEN_BRIGHT = Color3.fromRGB(200, 255, 220)
+local COMMON_ACCENT: TierAccentColors = {
+	stroke = RewardUiColors.FISH_COMMON_GREEN,
+	glow = RewardUiColors.FISH_COMMON_GREEN,
+	glowBright = RewardUiColors.FISH_COMMON_GREEN_BRIGHT,
+}
+
+local RARE_ACCENT: TierAccentColors = {
+	stroke = RewardUiColors.FISH_RARE_BLUE,
+	glow = RewardUiColors.FISH_RARE_BLUE,
+	glowBright = RewardUiColors.FISH_RARE_BLUE_BRIGHT,
+}
+
+local LEGENDARY_ACCENT: TierAccentColors = {
+	stroke = RewardUiColors.FISH_LEGENDARY_PURPLE,
+	glow = RewardUiColors.FISH_LEGENDARY_PURPLE,
+	glowBright = RewardUiColors.FISH_LEGENDARY_PURPLE_BRIGHT,
+}
+
+local JACKPOT_ACCENT: TierAccentColors = {
+	stroke = RewardUiColors.FISH_JACKPOT_GOLD,
+	glow = RewardUiColors.FISH_JACKPOT_GOLD,
+	glowBright = RewardUiColors.FISH_JACKPOT_GOLD_BRIGHT,
+}
 
 local GLOW_OUTER_SCALE = 1.35
 local GLOW_OUTER_BASE_TRANSPARENCY = 0.80
@@ -37,7 +66,7 @@ local PREPARE_LOAD_TIMEOUT_SEC = 10
 local WAVE_WIPE_IMAGE_ID = "rbxassetid://93697217392256"
 local SAND_COVER_IMAGE_ID = "rbxassetid://122141499309246"
 local WAVE_WIPE_DURATION_SEC = 2.5
-local REVEAL_PAUSE_BEFORE_WIPE_SEC = 0.5
+local REVEAL_PAUSE_BEFORE_WIPE_SEC = 1
 local WAVE_WIPE_WIDTH_SCALE = 2.2
 local WAVE_WIPE_HEIGHT_SCALE = 2.0
 -- Lower starting Y so more wave is visible on panel during the pre-wipe pause.
@@ -45,6 +74,8 @@ local WAVE_WIPE_START_Y_SCALE = 0.15
 local WAVE_WIPE_END_Y_SCALE = 1.55
 local WAVE_DRIFT_X_START_SCALE = 0.34
 local WAVE_DRIFT_X_END_SCALE = 0.66
+-- One left-right leg of the ping-pong drift (repeats until reveal ends).
+local WAVE_DRIFT_LEG_DURATION_SEC = 0.5
 local PANEL_CORNER_RADIUS = UDim.new(0, 6)
 
 -- Built at center during reel (gui disabled); revealed after retract.
@@ -64,7 +95,18 @@ type PendingCatch = {
 	amount: number,
 }
 
-local pendingByImageId: { [string]: PendingCatch } = {}
+type RevealJob = {
+	imageId: string,
+	amount: number,
+	showWave: any,
+}
+
+-- One celebration on screen at a time; additional reveals wait in line.
+local revealQueue: { RevealJob } = {}
+local revealDrainRunning = false
+local activeCatch: PendingCatch? = nil
+-- Prepare only warms assets; full overlay is built when a reveal job runs.
+local preparedAmountByImageId: { [string]: number } = {}
 -- Session-only until FishCollectionStore; then server drives showWave on reveal.
 local seenFishImageIdsSession: { [string]: boolean } = {}
 
@@ -244,9 +286,14 @@ local function playWaveWipeInsidePanel(fishImage: ImageLabel, panel: Frame): ()
 
 	fishImage.ImageTransparency = 0
 
-	local driftDuration = REVEAL_PAUSE_BEFORE_WIPE_SEC + WAVE_WIPE_DURATION_SEC
-	local driftInfo = TweenInfo.new(driftDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
-	local driftTween = TweenService:Create(wave, driftInfo, {
+	local driftLegInfo = TweenInfo.new(
+		WAVE_DRIFT_LEG_DURATION_SEC,
+		Enum.EasingStyle.Linear,
+		Enum.EasingDirection.InOut,
+		-1,
+		true
+	)
+	local driftTween = TweenService:Create(wave, driftLegInfo, {
 		Position = UDim2.fromScale(WAVE_DRIFT_X_END_SCALE, 0),
 	})
 	driftTween:Play()
@@ -257,24 +304,41 @@ local function playWaveWipeInsidePanel(fishImage: ImageLabel, panel: Frame): ()
 	local moveTween = TweenService:Create(revealGroup, moveInfo, { Position = UDim2.fromScale(0.5, WAVE_WIPE_END_Y_SCALE) })
 	moveTween:Play()
 	moveTween.Completed:Wait()
-	driftTween:Cancel()
 
 	if revealClip.Parent then
 		revealClip:Destroy()
 	end
 end
 
-local function destroyPending(imageId: string)
-	local pending = pendingByImageId[imageId]
+local function getAccentColorsForTier(tier: FishTier): TierAccentColors
+	if tier == "jackpot" then
+		return JACKPOT_ACCENT
+	end
+	if tier == "legendary" then
+		return LEGENDARY_ACCENT
+	end
+	if tier == "rare" then
+		return RARE_ACCENT
+	end
+	return COMMON_ACCENT
+end
+
+local function resolveTierForImageId(imageId: string): FishTier
+	return SplashKillFishFrames.inferTierForImageId(imageId)
+end
+
+local function destroyActiveCatch()
+	local pending = activeCatch
 	if pending then
 		if pending.gui.Parent then
 			pending.gui:Destroy()
 		end
-		pendingByImageId[imageId] = nil
+		activeCatch = nil
 	end
 end
 
-local function buildCatchOverlay(imageId: string, amount: number): PendingCatch
+local function buildCatchOverlay(imageId: string, amount: number, tier: FishTier): PendingCatch
+	local accent = getAccentColorsForTier(tier)
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "SplashKillFishOverlay"
 	gui.ResetOnSpawn = false
@@ -310,7 +374,7 @@ local function buildCatchOverlay(imageId: string, amount: number): PendingCatch
 	glowOuter.AnchorPoint = Vector2.new(0.5, 0.5)
 	glowOuter.Position = UDim2.fromScale(0.5, 0.5)
 	glowOuter.Size = UDim2.fromOffset(outerPx, outerPx)
-	glowOuter.BackgroundColor3 = REWARD_GREEN
+	glowOuter.BackgroundColor3 = accent.glow
 	glowOuter.BackgroundTransparency = GLOW_OUTER_BASE_TRANSPARENCY
 	glowOuter.BorderSizePixel = 0
 	glowOuter.ZIndex = 0
@@ -338,7 +402,7 @@ local function buildCatchOverlay(imageId: string, amount: number): PendingCatch
 
 	local panelStroke = Instance.new("UIStroke")
 	panelStroke.Name = "RewardStroke"
-	panelStroke.Color = REWARD_GREEN
+	panelStroke.Color = accent.stroke
 	panelStroke.Thickness = PANEL_STROKE_THICKNESS
 	panelStroke.Transparency = PANEL_STROKE_TRANSPARENCY
 	panelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
@@ -366,7 +430,7 @@ local function buildCatchOverlay(imageId: string, amount: number): PendingCatch
 	}
 end
 
-local function runSparkleLoop(gui: ScreenGui, glowOuter: Frame, durationSec: number)
+local function runSparkleLoop(gui: ScreenGui, glowOuter: Frame, durationSec: number, accent: TierAccentColors)
 	local deadline = os.clock() + durationSec
 	task.spawn(function()
 		while os.clock() < deadline and gui.Parent and glowOuter.Parent do
@@ -379,7 +443,7 @@ local function runSparkleLoop(gui: ScreenGui, glowOuter: Frame, durationSec: num
 				0.65,
 				0.90
 			)
-			glowOuter.BackgroundColor3 = REWARD_GREEN:Lerp(REWARD_GREEN_BRIGHT, shimmer * 0.35)
+			glowOuter.BackgroundColor3 = accent.glow:Lerp(accent.glowBright, shimmer * 0.35)
 
 			RunService.Heartbeat:Wait()
 		end
@@ -395,7 +459,7 @@ local function spawnScreenCashPop(root: Frame, amount: number)
 	label.BackgroundTransparency = 1
 	label.Font = Enum.Font.GothamBold
 	label.TextScaled = true
-	label.TextColor3 = REWARD_GREEN
+	label.TextColor3 = RewardUiColors.PROFIT_GREEN
 	label.TextStrokeColor3 = CASH_POP_STROKE
 	label.TextStrokeTransparency = 0.35
 	label.TextTransparency = 0
@@ -443,35 +507,41 @@ local function playCashRewardFromFrame(root: Frame, amount: number)
 	end)
 end
 
-local function prepareCatchOverlay(imageId: string, amount: number)
-	destroyPending(imageId)
+local function prepareCatch(imageId: string, amount: number)
 	warmImageIdInPoolAsync(imageId)
 	pcall(function()
 		ContentProvider:PreloadAsync({ imageId, WAVE_WIPE_IMAGE_ID, SAND_COVER_IMAGE_ID })
 	end)
-	pendingByImageId[imageId] = buildCatchOverlay(imageId, amount)
+	preparedAmountByImageId[imageId] = amount
 end
 
-local function playRevealCelebration(pending: PendingCatch)
+local function playRevealCelebration(pending: PendingCatch, tier: FishTier, sparkleDurationSec: number?)
 	local popInfo = TweenInfo.new(POP_IN_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 	TweenService:Create(pending.rootScale, popInfo, { Scale = 1 }):Play()
-	runSparkleLoop(pending.gui, pending.glowOuter, DISPLAY_SEC)
+	local sparkleSec = sparkleDurationSec or DISPLAY_SEC
+	runSparkleLoop(pending.gui, pending.glowOuter, sparkleSec, getAccentColorsForTier(tier))
 	playCashRewardFromFrame(pending.root, pending.amount)
-	Debris:AddItem(pending.gui, DISPLAY_SEC + 0.25)
 end
 
-local function revealCatchOverlay(imageId: string, amount: number, showWaveFlag: any)
-	local pending = pendingByImageId[imageId]
-	if not pending then
-		prepareCatchOverlay(imageId, amount)
-		pending = pendingByImageId[imageId]
-	end
-	if not pending then
-		return
-	end
-	pendingByImageId[imageId] = nil
+-- Runs synchronously until this catch's full sequence finishes (for queue draining).
+local function runRevealCelebration(job: RevealJob)
+	local imageId = job.imageId
+	local amount = job.amount
+	local showWaveFlag = job.showWave
 
-	if not pending.gui.Parent then
+	local preparedAmount = preparedAmountByImageId[imageId]
+	preparedAmountByImageId[imageId] = nil
+	destroyActiveCatch()
+
+	if amount <= 0 and typeof(preparedAmount) == "number" and preparedAmount > 0 then
+		amount = preparedAmount
+	end
+
+	local tier = resolveTierForImageId(imageId)
+	activeCatch = buildCatchOverlay(imageId, amount, tier)
+	local pending = activeCatch
+	if not pending or not pending.gui.Parent then
+		activeCatch = nil
 		return
 	end
 
@@ -488,14 +558,40 @@ local function revealCatchOverlay(imageId: string, amount: number, showWaveFlag:
 	waitForImageLabelLoaded(pending.fishImage, PREPARE_LOAD_TIMEOUT_SEC)
 
 	if playWave then
+		playRevealCelebration(pending, tier, WAVE_WIPE_DURATION_SEC)
 		playWaveWipeInsidePanel(pending.fishImage, pending.fishPanel)
 		markFishDiscoveredSession(imageId)
+		destroyActiveCatch()
 	else
 		task.wait(REVEAL_PAUSE_BEFORE_WIPE_SEC)
 		pending.fishImage.ImageTransparency = 0
+		playRevealCelebration(pending, tier)
+		task.wait(DISPLAY_SEC + 0.25)
+		destroyActiveCatch()
 	end
+end
 
-	playRevealCelebration(pending)
+local function drainRevealQueue()
+	if revealDrainRunning then
+		return
+	end
+	revealDrainRunning = true
+	task.spawn(function()
+		while #revealQueue > 0 do
+			local job = table.remove(revealQueue, 1)
+			runRevealCelebration(job)
+		end
+		revealDrainRunning = false
+	end)
+end
+
+local function enqueueReveal(imageId: string, amount: number, showWaveFlag: any)
+	table.insert(revealQueue, {
+		imageId = imageId,
+		amount = amount,
+		showWave = showWaveFlag,
+	})
+	drainRevealQueue()
 end
 
 local function startJoinWarmup()
@@ -551,8 +647,8 @@ remote.OnClientEvent:Connect(function(imageId: any, payout: any, phase: any, sho
 	local resolvedPhase = parseVfxPhase(phase)
 
 	if resolvedPhase == VFX_PHASE_PREPARE then
-		prepareCatchOverlay(imageId, amount)
+		prepareCatch(imageId, amount)
 	else
-		revealCatchOverlay(imageId, amount, showWave)
+		enqueueReveal(imageId, amount, showWave)
 	end
 end)

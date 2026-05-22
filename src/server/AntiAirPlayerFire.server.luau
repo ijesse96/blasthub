@@ -7,6 +7,7 @@ local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 
 local Ricochet = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirRicochetProjectile") :: ModuleScript)
+local SplashReelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirSplashReelConfig"))
 local HarpoonVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirHarpoonProjectileVisual") :: ModuleScript)
 local Money = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Money") :: ModuleScript)
 local ConveyorAntiAirBridge = require(script.Parent:WaitForChild("ConveyorAntiAirBridge") :: ModuleScript)
@@ -399,6 +400,10 @@ local function fireForPlayer(
 			rope.addCorner(worldCorner)
 		end,
 		onSplashReelMeterPending = function(proj: BasePart, merge: ConveyorAntiAirBridge.PostHitRetract)
+			if not SplashReelConfig.TAP_TO_REEL_ENABLED then
+				Ricochet.beginDeferredRetract(proj)
+				return
+			end
 			local startMeter = METER_START
 			pendingSplashByUserId[player.UserId] = {
 				playerUserId = player.UserId,

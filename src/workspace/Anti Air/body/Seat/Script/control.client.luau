@@ -3,6 +3,7 @@ local HEARTBEAT_SHOT_INTERVAL = 0.2
 local RELOAD_SOUND_CUTOFF = 0.08
 local CROSSHAIR_DISTANCE = 5000
 local FIRE_REMOTE_NAME = "AntiAirPlayerFire"
+local HIT_FLASH_VFX_REMOTE_NAME = "AntiAirConveyorHitFlashVfx"
 local SPLASH_REEL_TAP_REMOTE_NAME = "AntiAirSplashReelTap"
 local SPLASH_REEL_METER_REMOTE_NAME = "AntiAirSplashReelMeterState"
 local PLAYER_PROJECTILES_FOLDER_NAME = "AntiAirPlayerProjectiles"
@@ -61,6 +62,12 @@ if not fireRemote or not fireRemote:IsA("RemoteEvent") then
 	return
 end
 
+local hitFlashVfxInst = replicatedStorage:WaitForChild(HIT_FLASH_VFX_REMOTE_NAME, 30)
+local hitFlashVfxRemote: RemoteEvent? = if hitFlashVfxInst:IsA("RemoteEvent") then hitFlashVfxInst else nil
+if not hitFlashVfxRemote then
+	warn("[AntiAirFlashClient] Missing RemoteEvent", HIT_FLASH_VFX_REMOTE_NAME, "- predict hit flash disabled")
+end
+
 local splashTapInst = replicatedStorage:WaitForChild(SPLASH_REEL_TAP_REMOTE_NAME, 30)
 local splashMeterInst = replicatedStorage:WaitForChild(SPLASH_REEL_METER_REMOTE_NAME, 30)
 local splashTapRemote: RemoteEvent? = if splashTapInst:IsA("RemoteEvent") then splashTapInst else nil
@@ -113,6 +120,7 @@ end
 
 local Ricochet = require(replicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirRicochetProjectile") :: ModuleScript)
 local HarpoonVisual = require(replicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirHarpoonProjectileVisual") :: ModuleScript)
+local SplashReelConfig = require(replicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirSplashReelConfig"))
 
 local BULLET_SPEED = 280
 local BULLET_LIFETIME_SEC = 7
@@ -121,6 +129,7 @@ local HARPOON_RETRACT_DURATION_SEC = 0.38
 local MUZZLE_OFFSET_STUDS = 5
 -- Must match AntiAirPlayerFire.server.luau
 local MAX_AIM_DIRECTION_Y = 0.42
+local CONVEYOR_ITEM_ATTRIBUTE = "IsConveyorItem"
 local IS_WATER_SPLASH_ATTRIBUTE = "IsWaterSplash"
 local SPLASH_HIT_COLLIDER_NAME = "SplashHitCollider"
 local SPLASH_RAYCAST_MAX_DISTANCE = 2000
@@ -202,6 +211,29 @@ end
 
 warn("[AntiAirFlashClient] control script started")
 
+local function getConveyorModelFromHit(hitPart: BasePart): Model?
+	local current: Instance? = hitPart
+	while current do
+		if current:IsA("Model") and current:GetAttribute(CONVEYOR_ITEM_ATTRIBUTE) == true then
+			return current
+		end
+		current = current.Parent
+	end
+	return nil
+end
+
+local function requestPredictHitFlash(hitPart: BasePart)
+	if not hitFlashVfxRemote then
+		return
+	end
+	local hitModel = getConveyorModelFromHit(hitPart)
+	if not hitModel then
+		return
+	end
+	debugLog("FireServer predict vfx flash", hitModel:GetFullName())
+	hitFlashVfxRemote:FireServer(hitPart)
+end
+
 local function createCrosshair()
 	local crosshairGui = Instance.new("ScreenGui")
 	crosshairGui.Name = "AntiAirCrosshair"
@@ -267,6 +299,9 @@ local function requestSplashReelTap()
 end
 
 local function showSplashReelGui(initialMeter: number)
+	if not SplashReelConfig.TAP_TO_REEL_ENABLED then
+		return
+	end
 	destroySplashReelGui()
 	splashMeterVisible = true
 
@@ -334,6 +369,9 @@ end
 
 if splashMeterRemote then
 	splashMeterConn = splashMeterRemote.OnClientEvent:Connect(function(visible: unknown, meter: unknown)
+		if not SplashReelConfig.TAP_TO_REEL_ENABLED then
+			return
+		end
 		if visible ~= true then
 			destroySplashReelGui()
 			return
@@ -786,7 +824,8 @@ local function fireOnce(
 		maxLifetimeSeconds = BULLET_LIFETIME_SEC,
 		raycastExclude = rayExclude,
 		chosenWaterSplash = chosenSplash,
-		onConveyorHit = function(_hitPart: BasePart)
+		onConveyorHit = function(hitPart: BasePart)
+			requestPredictHitFlash(hitPart)
 			return nil
 		end,
 		retractToPart = gunPart,

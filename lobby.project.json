@@ -12,6 +12,12 @@
         "$path": "src/lobby/server"
       }
     },
+    "StarterGui": {
+      "$className": "StarterGui",
+      "$properties": {
+        "ScreenOrientation": "LandscapeSensor"
+      }
+    },
     "StarterPlayer": {
       "StarterPlayerScripts": {
         "LobbyClient": {

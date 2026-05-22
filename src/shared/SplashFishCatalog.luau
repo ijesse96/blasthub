@@ -1,12 +1,13 @@
 --!strict
 -- Per-map splash fish image ids by rarity tier. Paste new ids into the matching tier table.
 
-export type FishTier = "common" | "rare" | "legendary"
+export type FishTier = "common" | "rare" | "legendary" | "jackpot"
 
 export type MapFishTiers = {
 	common: { string },
 	rare: { string },
 	legendary: { string },
+	jackpot: { string },
 }
 
 local catalog: { [string]: MapFishTiers } = {
@@ -75,12 +76,113 @@ local catalog: { [string]: MapFishTiers } = {
 			"rbxassetid://79572378701133",
 			"rbxassetid://72030311891673",
 		},
-		rare = {},
-		legendary = {},
+		rare = {
+			"rbxassetid://111162978627012",
+			"rbxassetid://79031258793570",
+			"rbxassetid://122270730023094",
+			"rbxassetid://94375524542480",
+			"rbxassetid://105043130273934",
+			"rbxassetid://96346424247791",
+			"rbxassetid://117559905044863",
+			"rbxassetid://123788664302447",
+			"rbxassetid://72728233354395",
+			"rbxassetid://106508951049354",
+			"rbxassetid://107791960260541",
+			"rbxassetid://71281858170011",
+			"rbxassetid://122210234798379",
+			"rbxassetid://114733843330061",
+			"rbxassetid://107979171859424",
+			"rbxassetid://94134562492456",
+			"rbxassetid://101029661281387",
+			"rbxassetid://102582417501584",
+			"rbxassetid://134928608897254",
+			"rbxassetid://116510172120294",
+			"rbxassetid://134793144313869",
+			"rbxassetid://99699629165694",
+			"rbxassetid://102975214008656",
+			"rbxassetid://104151122024871",
+			"rbxassetid://83125949242482",
+			"rbxassetid://94100815689815",
+			"rbxassetid://78201873379326",
+			"rbxassetid://88326700093005",
+			"rbxassetid://99097060536642",
+			"rbxassetid://80975049373810",
+			"rbxassetid://133099212511972",
+			"rbxassetid://137998891674251",
+			"rbxassetid://135148362535701",
+			"rbxassetid://116202927773022",
+			"rbxassetid://100302825512373",
+			"rbxassetid://125838247762876",
+			"rbxassetid://106562282855025",
+			"rbxassetid://119324407982126",
+			"rbxassetid://126850424308429",
+			"rbxassetid://127867128314098",
+			"rbxassetid://78040307143054",
+			"rbxassetid://131082067982357",
+			"rbxassetid://105673734419036",
+			"rbxassetid://127829564733478",
+			"rbxassetid://72633228578754",
+			"rbxassetid://116182745721730",
+			"rbxassetid://140149792233957",
+			"rbxassetid://93271341692412",
+			"rbxassetid://139734585167839",
+			"rbxassetid://130890978801370",
+			"rbxassetid://110538054555198",
+			"rbxassetid://97222885561314",
+			"rbxassetid://114343808913438",
+			"rbxassetid://120635152926303",
+			"rbxassetid://123620658862994",
+			"rbxassetid://122359984327555",
+		},
+		jackpot = {
+			"rbxassetid://107917045018097",
+		},
+		legendary = {
+			"rbxassetid://87992282626603",
+			"rbxassetid://135039847776430",
+			"rbxassetid://73704405720748",
+			"rbxassetid://138815690227766",
+			"rbxassetid://93614571753602",
+			"rbxassetid://76273687220643",
+			"rbxassetid://110781888130848",
+			"rbxassetid://78582381787224",
+			"rbxassetid://76030769874788",
+			"rbxassetid://118591774049006",
+			"rbxassetid://84156003958485",
+			"rbxassetid://95196073674268",
+			"rbxassetid://133961169627867",
+			"rbxassetid://99545440979598",
+			"rbxassetid://79588954987149",
+			"rbxassetid://128698527410655",
+			"rbxassetid://106734458693548",
+			"rbxassetid://122921781604823",
+			"rbxassetid://84495546354654",
+			"rbxassetid://115173049189528",
+			"rbxassetid://130058565487419",
+			"rbxassetid://90168051882744",
+			"rbxassetid://136804484001349",
+			"rbxassetid://107867082020840",
+			"rbxassetid://138192492834845",
+			"rbxassetid://90430512038146",
+			"rbxassetid://126635814476270",
+			"rbxassetid://111565943200697",
+			"rbxassetid://103251400279676",
+			"rbxassetid://110640882590220",
+			"rbxassetid://108262349173801",
+			"rbxassetid://95373006703722",
+			"rbxassetid://81479143876377",
+			"rbxassetid://88838977283975",
+			"rbxassetid://132216284825145",
+			"rbxassetid://134844165127345",
+			"rbxassetid://118213653020939",
+			"rbxassetid://92717659172223",
+			"rbxassetid://85712994978243",
+		},
 	},
 }
 
-local TIERS: { FishTier } = { "common", "rare", "legendary" }
+local TIERS: { FishTier } = { "common", "rare", "legendary", "jackpot" }
+local GAMEPLAY_TIERS: { FishTier } = { "common", "rare", "legendary", "jackpot" }
 
 local SplashFishCatalog = {}
 
@@ -96,6 +198,35 @@ function SplashFishCatalog.getIdsForTier(mapId: string, tier: FishTier): { strin
 	return mapTiers[tier]
 end
 
+function SplashFishCatalog.getSpawnableIdsForMap(mapId: string): { string }
+	local mapTiers = catalog[mapId]
+	if not mapTiers then
+		return {}
+	end
+	local out: { string } = {}
+	for _, tier in GAMEPLAY_TIERS do
+		for _, id in mapTiers[tier] do
+			table.insert(out, id)
+		end
+	end
+	return out
+end
+
+function SplashFishCatalog.getTierForImageId(mapId: string, imageId: string): FishTier?
+	local mapTiers = catalog[mapId]
+	if not mapTiers then
+		return nil
+	end
+	for _, tier in TIERS do
+		for _, id in mapTiers[tier] do
+			if id == imageId then
+				return tier
+			end
+		end
+	end
+	return nil
+end
+
 function SplashFishCatalog.getAllIdsForMap(mapId: string): { string }
 	local mapTiers = catalog[mapId]
 	if not mapTiers then
@@ -108,6 +239,23 @@ function SplashFishCatalog.getAllIdsForMap(mapId: string): { string }
 		end
 	end
 	return out
+end
+
+function SplashFishCatalog.getOrderedTiers(): { FishTier }
+	return TIERS
+end
+
+function SplashFishCatalog.listMapIds(): { string }
+	local ids: { string } = {}
+	for mapId, _ in catalog do
+		table.insert(ids, mapId)
+	end
+	table.sort(ids)
+	return ids
+end
+
+function SplashFishCatalog.countCardsForMap(mapId: string): number
+	return #SplashFishCatalog.getAllIdsForMap(mapId)
 end
 
 return SplashFishCatalog

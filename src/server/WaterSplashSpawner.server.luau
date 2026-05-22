@@ -376,9 +376,9 @@ local function trySpawn(template: Instance, bounds: ArenaBounds, activeFolder: F
 			-- ConveyorSystem reads this when floating dead items to the turret; preserve our spawn scale.
 			model:SetAttribute(CONVEYOR_SCALE_ATTRIBUTE, scale)
 			model:SetAttribute(IS_WATER_SPLASH_ATTRIBUTE, true)
-			local splashFishImageId = SplashKillFishFrames.pickImageId()
+			local splashFishImageId, splashFishTier = SplashKillFishFrames.pickGameplayFish()
 			model:SetAttribute(SplashKillFishFrames.IMAGE_ID_ATTRIBUTE, splashFishImageId)
-			model:SetAttribute(SplashKillFishFrames.RARITY_ATTRIBUTE, SplashKillFishFrames.DEFAULT_TIER)
+			model:SetAttribute(SplashKillFishFrames.RARITY_ATTRIBUTE, splashFishTier)
 			fireSplashKillFishPreloadToAll(splashFishImageId)
 
 			local yaw = math.random() * math.pi * 2
