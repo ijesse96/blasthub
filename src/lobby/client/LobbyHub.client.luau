@@ -26,9 +26,10 @@ local requestJoinMap: RemoteEvent? = nil
 local requestCoinPurchase: RemoteEvent? = nil
 local requestDailySpin: RemoteEvent? = nil
 
-type SubPanelId = "play" | "daily" | "shop" | nil
+type SubPanelId = "daily" | "shop" | nil
 
 local activeSubPanel: SubPanelId = nil
+local activeMapSelect = false
 local spinBusy = false
 local joiningMapId: string? = nil
 
@@ -336,19 +337,6 @@ statusLabel.ZIndex = LobbyUiConfig.Z_STATUS
 statusLabel.Parent = buttonLayer
 addCorner(statusLabel, 8)
 
-local mapListHost = Instance.new("Frame")
-mapListHost.Name = "MapList"
-mapListHost.Size = UDim2.fromScale(1, 1)
-mapListHost.BackgroundTransparency = 1
-mapListHost.Visible = false
-mapListHost.ZIndex = LobbyUiConfig.Z_SUB_PANEL + 2
-mapListHost.Parent = subBody
-
-local mapListLayout = Instance.new("UIListLayout")
-mapListLayout.Padding = UDim.new(0, 8)
-mapListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-mapListLayout.Parent = mapListHost
-
 local dailyHost = Instance.new("Frame")
 dailyHost.Name = "Daily"
 dailyHost.Size = UDim2.fromScale(1, 1)
@@ -450,6 +438,101 @@ buyButton.Parent = shopHost
 addCorner(buyButton, 10)
 addStroke(buyButton, RewardUiColors.FISH_RARE_BLUE, 2, 0.25)
 
+-- Fullscreen map selection (Play flow).
+local inset = LobbyUiConfig.MAP_SELECT_OVERLAY_INSET
+local mapSelectOverlay = Instance.new("Frame")
+mapSelectOverlay.Name = "MapSelectOverlay"
+mapSelectOverlay.Size = UDim2.fromScale(1, 1)
+mapSelectOverlay.BackgroundTransparency = 1
+mapSelectOverlay.Visible = false
+mapSelectOverlay.ZIndex = LobbyUiConfig.Z_MAP_SELECT
+mapSelectOverlay.Parent = screenGui
+
+local mapSelectScrim = Instance.new("TextButton")
+mapSelectScrim.Name = "Scrim"
+mapSelectScrim.Size = UDim2.fromScale(1, 1)
+mapSelectScrim.BackgroundColor3 = Color3.new(0, 0, 0)
+mapSelectScrim.BackgroundTransparency = LobbyUiConfig.MAP_SELECT_SCRIM_TRANSPARENCY
+mapSelectScrim.Text = ""
+mapSelectScrim.AutoButtonColor = false
+mapSelectScrim.ZIndex = LobbyUiConfig.Z_MAP_SELECT
+mapSelectScrim.Parent = mapSelectOverlay
+
+local mapSelectContent = Instance.new("Frame")
+mapSelectContent.Name = "Content"
+mapSelectContent.AnchorPoint = Vector2.new(0.5, 0.5)
+mapSelectContent.Position = UDim2.fromScale(0.5, 0.5)
+mapSelectContent.Size = UDim2.new(1, -inset * 2, 1, -inset * 2)
+mapSelectContent.BackgroundColor3 = LobbyUiConfig.MAP_SELECT_CONTENT_COLOR
+mapSelectContent.BackgroundTransparency = 0
+mapSelectContent.ZIndex = LobbyUiConfig.Z_MAP_SELECT + 1
+mapSelectContent.Parent = mapSelectOverlay
+addCorner(mapSelectContent, 14)
+addStroke(mapSelectContent, LobbyUiConfig.SUB_PANEL_STROKE, 2, 0.2)
+
+local mapSelectHeader = Instance.new("Frame")
+mapSelectHeader.Name = "Header"
+mapSelectHeader.Size = UDim2.new(1, 0, 0, 56)
+mapSelectHeader.BackgroundColor3 = LobbyUiConfig.MAP_SELECT_HEADER_COLOR
+mapSelectHeader.BorderSizePixel = 0
+mapSelectHeader.ZIndex = LobbyUiConfig.Z_MAP_SELECT + 2
+mapSelectHeader.Parent = mapSelectContent
+
+local mapSelectHeaderCorner = Instance.new("UICorner")
+mapSelectHeaderCorner.CornerRadius = UDim.new(0, 14)
+mapSelectHeaderCorner.Parent = mapSelectHeader
+
+local mapSelectTitle = Instance.new("TextLabel")
+mapSelectTitle.Name = "Title"
+mapSelectTitle.Position = UDim2.fromOffset(20, 10)
+mapSelectTitle.Size = UDim2.new(1, -72, 1, -12)
+mapSelectTitle.TextXAlignment = Enum.TextXAlignment.Left
+mapSelectTitle.TextColor3 = LobbyUiConfig.SUB_TITLE_TEXT
+mapSelectTitle.Text = LobbyUiConfig.MAP_SELECT_TITLE
+styleLabel(mapSelectTitle, 26, true)
+mapSelectTitle.Parent = mapSelectHeader
+
+local mapSelectClose = Instance.new("TextButton")
+mapSelectClose.Name = "Close"
+mapSelectClose.AnchorPoint = Vector2.new(1, 0.5)
+mapSelectClose.Position = UDim2.new(1, -14, 0.5, 0)
+mapSelectClose.Size = UDim2.fromOffset(40, 40)
+mapSelectClose.BackgroundColor3 = Color3.fromRGB(80, 95, 115)
+mapSelectClose.Font = Enum.Font.GothamBold
+mapSelectClose.TextSize = 22
+mapSelectClose.TextColor3 = Color3.fromRGB(255, 255, 255)
+mapSelectClose.Text = "X"
+mapSelectClose.ZIndex = LobbyUiConfig.Z_MAP_SELECT + 4
+mapSelectClose.AutoButtonColor = true
+mapSelectClose.Parent = mapSelectHeader
+addCorner(mapSelectClose, 8)
+
+local mapScroll = Instance.new("ScrollingFrame")
+mapScroll.Name = "MapScroll"
+mapScroll.Position = UDim2.fromOffset(16, 64)
+mapScroll.Size = UDim2.new(1, -32, 1, -80)
+mapScroll.BackgroundTransparency = 1
+mapScroll.BorderSizePixel = 0
+mapScroll.ScrollBarThickness = 8
+mapScroll.CanvasSize = UDim2.new()
+mapScroll.ZIndex = LobbyUiConfig.Z_MAP_SELECT + 2
+mapScroll.Parent = mapSelectContent
+
+local mapGrid = Instance.new("Frame")
+mapGrid.Name = "MapGrid"
+mapGrid.Size = UDim2.new(1, 0, 0, 0)
+mapGrid.AutomaticSize = Enum.AutomaticSize.Y
+mapGrid.BackgroundTransparency = 1
+mapGrid.ZIndex = LobbyUiConfig.Z_MAP_SELECT + 3
+mapGrid.Parent = mapScroll
+
+local mapGridLayout = Instance.new("UIGridLayout")
+mapGridLayout.CellSize = UDim2.fromOffset(LobbyUiConfig.MAP_TILE_WIDTH, LobbyUiConfig.MAP_TILE_HEIGHT)
+mapGridLayout.CellPadding = UDim2.fromOffset(LobbyUiConfig.MAP_TILE_PADDING, LobbyUiConfig.MAP_TILE_PADDING)
+mapGridLayout.FillDirectionMaxCells = LobbyUiConfig.MAP_SELECT_COLUMNS
+mapGridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+mapGridLayout.Parent = mapGrid
+
 local wheelSpinTween: Tween? = nil
 
 local function setStatus(text: string?, visible: boolean?)
@@ -462,9 +545,13 @@ local function setStatus(text: string?, visible: boolean?)
 end
 
 local function hideAllSubHosts()
-	mapListHost.Visible = false
 	dailyHost.Visible = false
 	shopHost.Visible = false
+end
+
+local function closeMapSelect()
+	activeMapSelect = false
+	mapSelectOverlay.Visible = false
 end
 
 local function closeSubPanel()
@@ -472,19 +559,19 @@ local function closeSubPanel()
 	subBackdrop.Visible = false
 	subPanel.Visible = false
 	hideAllSubHosts()
+	closeMapSelect()
 	setStatus(nil, false)
 end
 
 local function openSubPanel(panelId: SubPanelId, title: string)
+	closeMapSelect()
 	activeSubPanel = panelId
 	subTitle.Text = title
 	hideAllSubHosts()
 	subBackdrop.Visible = true
 	subPanel.Visible = true
 
-	if panelId == "play" then
-		mapListHost.Visible = true
-	elseif panelId == "daily" then
+	if panelId == "daily" then
 		dailyHost.Visible = true
 	elseif panelId == "shop" then
 		shopHost.Visible = true
@@ -516,62 +603,151 @@ local function stopWheelSpin()
 	end
 end
 
-local function buildMapRows()
-	for _, child in mapListHost:GetChildren() do
-		if child:IsA("GuiObject") and child ~= mapListLayout then
+local function mapNameAbbrev(displayName: string): string
+	local words = string.split(displayName, " ")
+	if #words >= 2 then
+		local abbrev = ""
+		for _, word in words do
+			if word ~= "" then
+				abbrev ..= string.sub(word, 1, 1)
+			end
+		end
+		if #abbrev >= 2 then
+			return string.upper(abbrev)
+		end
+	end
+	return string.upper(string.sub(displayName, 1, 2))
+end
+
+local function hasMapThumbnail(map: MatchMaps.MatchMap): boolean
+	local image = map.thumbnailImage
+	return typeof(image) == "string" and image ~= ""
+end
+
+local function updateMapScrollCanvas()
+	local columns = LobbyUiConfig.MAP_SELECT_COLUMNS
+	local pad = LobbyUiConfig.MAP_TILE_PADDING
+	local tileH = LobbyUiConfig.MAP_TILE_HEIGHT
+	local maps = MatchMaps.getAll()
+	local rowCount = math.max(1, math.ceil(#maps / columns))
+	local gridHeight = rowCount * (tileH + pad) + pad
+	mapGrid.Size = UDim2.new(1, 0, 0, gridHeight)
+	mapScroll.CanvasSize = UDim2.new(0, 0, 0, gridHeight)
+end
+
+local function buildMapTiles()
+	for _, child in mapGrid:GetChildren() do
+		if child:IsA("GuiObject") and child ~= mapGridLayout then
 			child:Destroy()
 		end
 	end
 
 	local maps = MatchMaps.getAll()
-	table.sort(maps, function(a, b)
-		return a.displayName < b.displayName
-	end)
+
+	local tileZ = LobbyUiConfig.Z_MAP_SELECT + 4
 
 	for i, map in maps do
 		local available = map.placeId ~= 0
-		local row = Instance.new("TextButton")
-		row.Name = "Map_" .. map.id
-		row.Size = UDim2.new(1, 0, 0, 64)
-		row.BackgroundColor3 = if available then LobbyUiConfig.SUB_ROW_COLOR else Color3.fromRGB(26, 30, 38)
-		row.BackgroundTransparency = if available then LobbyUiConfig.SUB_ROW_TRANSPARENCY else 0.15
-		row.Font = Enum.Font.GothamBold
-		row.TextSize = 0
-		row.Text = ""
-		row.AutoButtonColor = available
-		row.Active = available
-		row.LayoutOrder = i
-		row.ZIndex = LobbyUiConfig.Z_SUB_PANEL + 3
-		row.Parent = mapListHost
-		addCorner(row, 10)
-		if available then
-			addStroke(row, RewardUiColors.PROFIT_STROKE, 1.5, 0.45)
+		local tile = Instance.new("TextButton")
+		tile.Name = "Map_" .. map.id
+		tile.BackgroundColor3 = if available then Color3.fromRGB(22, 28, 38) else Color3.fromRGB(26, 30, 38)
+		tile.BackgroundTransparency = 0
+		tile.Text = ""
+		tile.Font = Enum.Font.GothamBold
+		tile.TextSize = 0
+		tile.AutoButtonColor = available
+		tile.Active = available
+		tile.LayoutOrder = i
+		tile.ZIndex = tileZ
+		tile.Parent = mapGrid
+		addCorner(tile, 10)
+		addStroke(tile, LobbyUiConfig.MAP_TILE_STROKE, 2, if available then 0.2 else 0.55)
+
+		local thumbHolder = Instance.new("Frame")
+		thumbHolder.Name = "Thumb"
+		thumbHolder.Position = UDim2.fromOffset(6, 6)
+		thumbHolder.Size = UDim2.new(1, -12, 1, -46)
+		thumbHolder.BackgroundTransparency = 1
+		thumbHolder.ClipsDescendants = true
+		thumbHolder.Active = false
+		thumbHolder.ZIndex = tileZ + 1
+		thumbHolder.Parent = tile
+		addCorner(thumbHolder, 8)
+
+		if hasMapThumbnail(map) then
+			local thumb = Instance.new("ImageLabel")
+			thumb.Name = "Image"
+			thumb.Size = UDim2.fromScale(1, 1)
+			thumb.BackgroundTransparency = 1
+			thumb.Image = map.thumbnailImage :: string
+			thumb.ScaleType = Enum.ScaleType.Crop
+			thumb.ZIndex = tileZ + 2
+			thumb.Parent = thumbHolder
+		else
+			local placeholder = Instance.new("Frame")
+			placeholder.Name = "Placeholder"
+			placeholder.Size = UDim2.fromScale(1, 1)
+			placeholder.BackgroundColor3 = LobbyUiConfig.MAP_PLACEHOLDER_COLOR
+			placeholder.BorderSizePixel = 0
+			placeholder.ZIndex = tileZ + 2
+			placeholder.Parent = thumbHolder
+			addCorner(placeholder, 8)
+
+			local abbrevLabel = Instance.new("TextLabel")
+			abbrevLabel.Size = UDim2.fromScale(1, 1)
+			abbrevLabel.BackgroundTransparency = 1
+			abbrevLabel.Font = Enum.Font.GothamBold
+			abbrevLabel.TextSize = 32
+			abbrevLabel.TextColor3 = Color3.fromRGB(120, 140, 165)
+			abbrevLabel.Text = mapNameAbbrev(map.displayName)
+			abbrevLabel.ZIndex = tileZ + 3
+			abbrevLabel.Parent = placeholder
 		end
 
+		local footer = Instance.new("Frame")
+		footer.Name = "Footer"
+		footer.AnchorPoint = Vector2.new(0, 1)
+		footer.Position = UDim2.new(0, 6, 1, -6)
+		footer.Size = UDim2.new(1, -12, 0, 36)
+		footer.BackgroundTransparency = 1
+		footer.Active = false
+		footer.ZIndex = tileZ + 1
+		footer.Parent = tile
+
 		local nameLabel = Instance.new("TextLabel")
-		nameLabel.Position = UDim2.fromOffset(16, 10)
-		nameLabel.Size = UDim2.new(1, -32, 0, 26)
-		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-		nameLabel.TextColor3 = if available then RewardUiColors.PROFIT_GREEN else Color3.fromRGB(160, 168, 178)
+		nameLabel.Name = "Title"
+		nameLabel.Size = UDim2.new(1, 0, 0, 18)
+		nameLabel.TextXAlignment = Enum.TextXAlignment.Center
+		nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		nameLabel.TextColor3 = if available then Color3.fromRGB(255, 220, 80) else Color3.fromRGB(160, 168, 178)
 		nameLabel.Text = map.displayName
-		styleLabel(nameLabel, 20, true)
-		nameLabel.ZIndex = LobbyUiConfig.Z_SUB_PANEL + 4
-		nameLabel.Parent = row
+		nameLabel.Font = Enum.Font.GothamBold
+		nameLabel.TextSize = 15
+		nameLabel.TextStrokeTransparency = 0.5
+		nameLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+		nameLabel.BackgroundTransparency = 1
+		nameLabel.ZIndex = tileZ + 3
+		nameLabel.Parent = footer
 
 		local feeLabel = Instance.new("TextLabel")
-		feeLabel.Position = UDim2.fromOffset(16, 34)
-		feeLabel.Size = UDim2.new(1, -32, 0, 22)
-		feeLabel.TextXAlignment = Enum.TextXAlignment.Left
+		feeLabel.Name = "Fee"
+		feeLabel.Position = UDim2.fromOffset(0, 18)
+		feeLabel.Size = UDim2.new(1, 0, 0, 16)
+		feeLabel.TextXAlignment = Enum.TextXAlignment.Center
 		feeLabel.TextColor3 = LobbyUiConfig.SUB_BODY_TEXT
 		feeLabel.Text = if available
-			then string.format("Entry fee: $%d", map.entryFee)
+			then string.format("Entry: $%d", map.entryFee)
 			else "Unavailable"
-		styleLabel(feeLabel, 16, false)
-		feeLabel.ZIndex = LobbyUiConfig.Z_SUB_PANEL + 4
-		feeLabel.Parent = row
+		feeLabel.Font = Enum.Font.GothamMedium
+		feeLabel.TextSize = 13
+		feeLabel.TextStrokeTransparency = 0.6
+		feeLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+		feeLabel.BackgroundTransparency = 1
+		feeLabel.ZIndex = tileZ + 3
+		feeLabel.Parent = footer
 
 		if available then
-			row.MouseButton1Click:Connect(function()
+			tile.MouseButton1Click:Connect(function()
 				if joiningMapId then
 					return
 				end
@@ -586,11 +762,23 @@ local function buildMapRows()
 			end)
 		end
 	end
+
+	updateMapScrollCanvas()
+end
+
+local function openMapSelect()
+	activeSubPanel = nil
+	subBackdrop.Visible = false
+	subPanel.Visible = false
+	hideAllSubHosts()
+	setStatus(nil, false)
+	buildMapTiles()
+	activeMapSelect = true
+	mapSelectOverlay.Visible = true
 end
 
 playButton.MouseButton1Click:Connect(function()
-	closeSubPanel()
-	openSubPanel("play", "Play")
+	openMapSelect()
 end)
 
 dailyButton.MouseButton1Click:Connect(function()
@@ -609,6 +797,8 @@ collectionButton.MouseButton1Click:Connect(function()
 end)
 
 subClose.MouseButton1Click:Connect(closeSubPanel)
+mapSelectClose.MouseButton1Click:Connect(closeSubPanel)
+mapSelectScrim.MouseButton1Click:Connect(closeSubPanel)
 
 spinButton.MouseButton1Click:Connect(function()
 	if spinBusy then
@@ -707,7 +897,7 @@ local function bindRemotes()
 	end
 end
 
-buildMapRows()
+buildMapTiles()
 
 task.spawn(function()
 	local ok, err = pcall(function()

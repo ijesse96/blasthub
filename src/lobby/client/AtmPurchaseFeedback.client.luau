@@ -52,16 +52,17 @@ purchaseResultRemote.OnClientEvent:Connect(function(payload: unknown)
 		return
 	end
 	local data = payload :: { [string]: unknown }
-	local ok = data.ok == true
+	if data.ok == true then
+		return
+	end
+
 	local message = data.message
 	local text: string
 	if typeof(message) == "string" and message ~= "" then
 		text = message :: string
-	elseif ok then
-		text = "Purchase complete!"
 	else
 		text = "Purchase cancelled."
 	end
 
-	showMessage(text, ok)
+	showMessage(text, false)
 end)
