@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local MatchMaps = require(shared:WaitForChild("MatchMaps"))
+local LobbyUiConfig = require(shared:WaitForChild("LobbyUiConfig"))
 local RewardUiColors = require(shared:WaitForChild("RewardUiColors"))
 local SplashFishCatalog = require(shared:WaitForChild("SplashFishCatalog"))
 local SplashKillFishFrames = require(shared:WaitForChild("SplashKillFishFrames"))
@@ -33,149 +34,19 @@ local GRID_COLUMNS = 5
 
 type OwnedByMap = { [string]: { [string]: number } }
 
+local M = {}
+
 local ownedByMap: OwnedByMap = {}
-
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
 local activeMapId = "main"
 local panelOpen = false
+local didInit = false
 
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "FishCollectionInventory"
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 55
-screenGui.Parent = playerGui
-
-local openButton = Instance.new("TextButton")
-openButton.Name = "OpenCollection"
-openButton.AnchorPoint = Vector2.new(0, 1)
-openButton.Position = UDim2.new(0, 20, 1, -20)
-openButton.Size = UDim2.fromOffset(140, 36)
-openButton.BackgroundColor3 = Color3.fromRGB(24, 38, 30)
-openButton.BackgroundTransparency = 0.1
-openButton.Font = Enum.Font.GothamBold
-openButton.TextSize = 18
-openButton.TextColor3 = RewardUiColors.PROFIT_GREEN
-openButton.Text = "Collection"
-openButton.AutoButtonColor = true
-openButton.Parent = screenGui
-
-local openCorner = Instance.new("UICorner")
-openCorner.CornerRadius = UDim.new(0, 8)
-openCorner.Parent = openButton
-
-local openStroke = Instance.new("UIStroke")
-openStroke.Color = RewardUiColors.PROFIT_STROKE
-openStroke.Thickness = 1.5
-openStroke.Transparency = 0.35
-openStroke.Parent = openButton
-
-local backdrop = Instance.new("Frame")
-backdrop.Name = "Backdrop"
-backdrop.Size = UDim2.fromScale(1, 1)
-backdrop.BackgroundColor3 = Color3.fromRGB(6, 10, 14)
-backdrop.BackgroundTransparency = 0.15
-backdrop.Visible = false
-backdrop.Parent = screenGui
-
-local panel = Instance.new("Frame")
-panel.Name = "Panel"
-panel.AnchorPoint = Vector2.new(0.5, 0.5)
-panel.Position = UDim2.fromScale(0.5, 0.5)
-panel.Size = UDim2.new(0.92, 0, 0.88, 0)
-panel.BackgroundColor3 = Color3.fromRGB(14, 20, 26)
-panel.BackgroundTransparency = 0.05
-panel.Visible = false
-panel.Parent = backdrop
-
-local panelCorner = Instance.new("UICorner")
-panelCorner.CornerRadius = UDim.new(0, 12)
-panelCorner.Parent = panel
-
-local panelStroke = Instance.new("UIStroke")
-panelStroke.Color = Color3.fromRGB(40, 58, 48)
-panelStroke.Thickness = 2
-panelStroke.Parent = panel
-
-local header = Instance.new("Frame")
-header.Name = "Header"
-header.Size = UDim2.new(1, 0, 0, 52)
-header.BackgroundTransparency = 1
-header.Parent = panel
-
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Name = "Title"
-titleLabel.Position = UDim2.fromOffset(20, 8)
-titleLabel.Size = UDim2.new(1, -160, 1, -8)
-titleLabel.BackgroundTransparency = 1
-titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextSize = 28
-titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-titleLabel.TextColor3 = Color3.fromRGB(235, 245, 240)
-titleLabel.Text = "Collection"
-titleLabel.Parent = header
-
-local closeButton = Instance.new("TextButton")
-closeButton.Name = "Close"
-closeButton.AnchorPoint = Vector2.new(1, 0.5)
-closeButton.Position = UDim2.new(1, -16, 0.5, 0)
-closeButton.Size = UDim2.fromOffset(36, 36)
-closeButton.BackgroundColor3 = Color3.fromRGB(32, 42, 50)
-closeButton.Font = Enum.Font.GothamBold
-closeButton.TextSize = 22
-closeButton.TextColor3 = Color3.fromRGB(220, 230, 235)
-closeButton.Text = "X"
-closeButton.Parent = header
-
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 8)
-closeCorner.Parent = closeButton
-
-local mapTabBar = Instance.new("Frame")
-mapTabBar.Name = "MapTabs"
-mapTabBar.Position = UDim2.fromOffset(16, 56)
-mapTabBar.Size = UDim2.new(1, -32, 0, 36)
-mapTabBar.BackgroundTransparency = 1
-mapTabBar.Parent = panel
-
-local mapTabLayout = Instance.new("UIListLayout")
-mapTabLayout.FillDirection = Enum.FillDirection.Horizontal
-mapTabLayout.Padding = UDim.new(0, 8)
-mapTabLayout.SortOrder = Enum.SortOrder.LayoutOrder
-mapTabLayout.Parent = mapTabBar
-
-local scroll = Instance.new("ScrollingFrame")
-scroll.Name = "Body"
-scroll.Position = UDim2.fromOffset(12, 100)
-scroll.Size = UDim2.new(1, -24, 1, -148)
-scroll.BackgroundTransparency = 1
-scroll.BorderSizePixel = 0
-scroll.ScrollBarThickness = 6
-scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 120, 95)
-scroll.CanvasSize = UDim2.fromOffset(0, 0)
-scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-scroll.Parent = panel
-
-local bodyLayout = Instance.new("UIListLayout")
-bodyLayout.Padding = UDim.new(0, 16)
-bodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
-bodyLayout.Parent = scroll
-
-local footer = Instance.new("TextLabel")
-footer.Name = "Footer"
-footer.AnchorPoint = Vector2.new(0, 1)
-footer.Position = UDim2.new(0, 20, 1, -12)
-footer.Size = UDim2.new(1, -40, 0, 28)
-footer.BackgroundTransparency = 1
-footer.Font = Enum.Font.GothamMedium
-footer.TextSize = 18
-footer.TextXAlignment = Enum.TextXAlignment.Left
-footer.TextColor3 = RewardUiColors.PROFIT_GREEN
-footer.Text = "Collected 0 / 0"
-footer.Parent = panel
-
+local screenGui: ScreenGui
+local backdrop: Frame
+local panel: Frame
+local scroll: ScrollingFrame
+local bodyLayout: UIListLayout
+local footer: TextLabel
 local mapTabsById: { [string]: TextButton } = {}
 
 local function sanitizeOwnedSnapshot(raw: unknown): OwnedByMap
@@ -406,7 +277,7 @@ local function applyOwnedSnapshot(snapshot: unknown)
 	end
 end
 
-local function buildMapTabs()
+local function buildMapTabs(mapTabBar: Frame)
 	for _, tab in mapTabsById do
 		tab:Destroy()
 	end
@@ -455,22 +326,178 @@ local function setPanelOpen(open: boolean)
 	end
 end
 
-openButton.MouseButton1Click:Connect(function()
-	setPanelOpen(not panelOpen)
-end)
+function M.init()
+	if didInit then
+		return
+	end
+	didInit = true
 
-closeButton.MouseButton1Click:Connect(function()
-	setPanelOpen(false)
-end)
+	local player = Players.LocalPlayer
+	local playerGui = player:WaitForChild("PlayerGui")
 
-local snapshotRemote = ReplicatedStorage:WaitForChild("FishCollectionSnapshot", 60)
-if snapshotRemote and snapshotRemote:IsA("RemoteEvent") then
-	snapshotRemote.OnClientEvent:Connect(function(snapshot: unknown)
-		applyOwnedSnapshot(snapshot)
+	screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "FishCollectionInventory"
+	screenGui.ResetOnSpawn = false
+	screenGui.IgnoreGuiInset = true
+	screenGui.DisplayOrder = 55
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screenGui.Parent = playerGui
+
+	backdrop = Instance.new("Frame")
+	backdrop.Name = "Backdrop"
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
+	backdrop.BackgroundTransparency = LobbyUiConfig.SUB_BACKDROP_TRANSPARENCY
+	backdrop.Active = false
+	backdrop.Visible = false
+	backdrop.ZIndex = 1
+	backdrop.Parent = screenGui
+
+	panel = Instance.new("Frame")
+	panel.Name = "Panel"
+	panel.AnchorPoint = Vector2.new(0.5, 0.5)
+	panel.Position = UDim2.fromScale(0.5, 0.5)
+	panel.Size = UDim2.new(0.92, 0, 0.88, 0)
+	panel.BackgroundColor3 = LobbyUiConfig.SUB_PANEL_COLOR
+	panel.BackgroundTransparency = LobbyUiConfig.SUB_PANEL_TRANSPARENCY
+	panel.ClipsDescendants = false
+	panel.Visible = false
+	panel.ZIndex = 2
+	panel.Parent = screenGui
+
+	local panelCorner = Instance.new("UICorner")
+	panelCorner.CornerRadius = UDim.new(0, 12)
+	panelCorner.Parent = panel
+
+	local panelStroke = Instance.new("UIStroke")
+	panelStroke.Color = LobbyUiConfig.SUB_PANEL_STROKE
+	panelStroke.Thickness = 2
+	panelStroke.Parent = panel
+
+	local header = Instance.new("Frame")
+	header.Name = "Header"
+	header.Size = UDim2.new(1, 0, 0, 52)
+	header.BackgroundColor3 = LobbyUiConfig.SUB_HEADER_COLOR
+	header.BackgroundTransparency = 0
+	header.ZIndex = 3
+	header.Parent = panel
+
+	local titleLabel = Instance.new("TextLabel")
+	titleLabel.Name = "Title"
+	titleLabel.Position = UDim2.fromOffset(20, 8)
+	titleLabel.Size = UDim2.new(1, -160, 1, -8)
+	titleLabel.BackgroundTransparency = 1
+	titleLabel.Font = Enum.Font.GothamBold
+	titleLabel.TextSize = 28
+	titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+	titleLabel.TextColor3 = LobbyUiConfig.SUB_TITLE_TEXT
+	titleLabel.TextStrokeTransparency = 0.65
+	titleLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+	titleLabel.Text = "Collection"
+	titleLabel.ZIndex = 4
+	titleLabel.Parent = header
+
+	local closeButton = Instance.new("TextButton")
+	closeButton.Name = "Close"
+	closeButton.AnchorPoint = Vector2.new(1, 0.5)
+	closeButton.Position = UDim2.new(1, -16, 0.5, 0)
+	closeButton.Size = UDim2.fromOffset(36, 36)
+	closeButton.BackgroundColor3 = Color3.fromRGB(80, 95, 115)
+	closeButton.ZIndex = 5
+	closeButton.Font = Enum.Font.GothamBold
+	closeButton.TextSize = 22
+	closeButton.TextColor3 = Color3.fromRGB(220, 230, 235)
+	closeButton.Text = "X"
+	closeButton.Parent = header
+
+	local closeCorner = Instance.new("UICorner")
+	closeCorner.CornerRadius = UDim.new(0, 8)
+	closeCorner.Parent = closeButton
+
+	local mapTabBar = Instance.new("Frame")
+	mapTabBar.Name = "MapTabs"
+	mapTabBar.Position = UDim2.fromOffset(16, 56)
+	mapTabBar.Size = UDim2.new(1, -32, 0, 36)
+	mapTabBar.BackgroundTransparency = 1
+	mapTabBar.ZIndex = 4
+	mapTabBar.Parent = panel
+
+	local mapTabLayout = Instance.new("UIListLayout")
+	mapTabLayout.FillDirection = Enum.FillDirection.Horizontal
+	mapTabLayout.Padding = UDim.new(0, 8)
+	mapTabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	mapTabLayout.Parent = mapTabBar
+
+	scroll = Instance.new("ScrollingFrame")
+	scroll.Name = "Body"
+	scroll.Position = UDim2.fromOffset(12, 100)
+	scroll.Size = UDim2.new(1, -24, 1, -148)
+	scroll.BackgroundColor3 = LobbyUiConfig.SUB_BODY_COLOR
+	scroll.BackgroundTransparency = 0
+	scroll.BorderSizePixel = 0
+	scroll.ZIndex = 4
+	scroll.ScrollBarThickness = 6
+	scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 120, 95)
+	scroll.CanvasSize = UDim2.fromOffset(0, 0)
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.Parent = panel
+
+	bodyLayout = Instance.new("UIListLayout")
+	bodyLayout.Padding = UDim.new(0, 16)
+	bodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	bodyLayout.Parent = scroll
+
+	footer = Instance.new("TextLabel")
+	footer.Name = "Footer"
+	footer.AnchorPoint = Vector2.new(0, 1)
+	footer.Position = UDim2.new(0, 20, 1, -12)
+	footer.Size = UDim2.new(1, -40, 0, 28)
+	footer.BackgroundTransparency = 1
+	footer.Font = Enum.Font.GothamMedium
+	footer.TextSize = 18
+	footer.TextXAlignment = Enum.TextXAlignment.Left
+	footer.TextColor3 = RewardUiColors.PROFIT_GREEN
+	footer.Text = "Collected 0 / 0"
+	footer.Parent = panel
+
+	closeButton.MouseButton1Click:Connect(function()
+		setPanelOpen(false)
 	end)
-else
-	warn("[FishCollectionInventory] Missing RemoteEvent FishCollectionSnapshot")
+
+	local snapshotRemote = ReplicatedStorage:WaitForChild("FishCollectionSnapshot", 60)
+	if snapshotRemote and snapshotRemote:IsA("RemoteEvent") then
+		snapshotRemote.OnClientEvent:Connect(function(snapshot: unknown)
+			applyOwnedSnapshot(snapshot)
+		end)
+	else
+		warn("[FishCollectionInventory] Missing RemoteEvent FishCollectionSnapshot")
+	end
+
+	buildMapTabs(mapTabBar)
+	renderCollection()
 end
 
-buildMapTabs()
-renderCollection()
+function M.openPanel()
+	if not didInit then
+		M.init()
+	end
+	setPanelOpen(true)
+end
+
+function M.closePanel()
+	setPanelOpen(false)
+end
+
+function M.togglePanel()
+	if panelOpen then
+		M.closePanel()
+	else
+		M.openPanel()
+	end
+end
+
+function M.isPanelOpen(): boolean
+	return panelOpen
+end
+
+return M

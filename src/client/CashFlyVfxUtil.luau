@@ -25,9 +25,16 @@ function CashFlyVfxUtil.getCashLabel(playerGui: PlayerGui): TextLabel?
 	if not hud then
 		return nil
 	end
-	local lbl = hud:FindFirstChild("CashText")
-	if lbl and lbl:IsA("TextLabel") then
-		return lbl
+	local bar = hud:FindFirstChild("CashBar")
+	if bar then
+		local amount = bar:FindFirstChild("Amount")
+		if amount and amount:IsA("TextLabel") then
+			return amount
+		end
+	end
+	local legacy = hud:FindFirstChild("CashText")
+	if legacy and legacy:IsA("TextLabel") then
+		return legacy
 	end
 	return nil
 end

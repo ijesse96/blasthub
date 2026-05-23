@@ -3,8 +3,7 @@ local RunService = game:GetService("RunService")
 
 local STORE_NAME = "DailySpinLastDate_v1"
 
--- TODO: set false before release — allows unlimited daily spins for testing.
-local DISABLE_DAILY_SPIN_LIMIT = true
+local DISABLE_DAILY_SPIN_LIMIT = false
 
 local store = DataStoreService:GetDataStore(STORE_NAME)
 

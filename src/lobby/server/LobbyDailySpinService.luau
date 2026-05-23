@@ -1,6 +1,5 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local DailySpinStore = require(shared:WaitForChild("DailySpinStore"))
@@ -8,49 +7,13 @@ local Money = require(shared:WaitForChild("Money"))
 
 local REMOTES_NAME = "LobbyRemotes"
 local SPIN_RESULT_NAME = "DailySpinResult"
-
-local MODEL_NAME = "daily spin"
-local PROMPT_NAME = "DailySpinPrompt"
-local PROMPT_ACTION = "Daily Spin"
-local PROMPT_OBJECT = "Wheel"
-local PROMPT_HOLD_DURATION = 0.2
-local PROMPT_MAX_DISTANCE = 12
+local REQUEST_SPIN_NAME = "RequestDailySpin"
 
 local DEBOUNCE_SECONDS = 1.5
 local lastTriggerAtByUserId: { [number]: number } = {}
+local didBind = false
 
-local function normalizeName(name: string): string
-	return string.lower((name:gsub("%s+", "")))
-end
-
-local function findSpinTarget(): Instance?
-	local wanted = normalizeName(MODEL_NAME)
-	for _, inst in Workspace:GetDescendants() do
-		if (inst:IsA("Model") or inst:IsA("BasePart")) and normalizeName(inst.Name) == wanted then
-			return inst
-		end
-	end
-	return nil
-end
-
-local function getSpinPart(target: Instance): BasePart?
-	if target:IsA("BasePart") then
-		return target
-	end
-
-	local model = target :: Model
-	if model.PrimaryPart then
-		return model.PrimaryPart
-	end
-
-	for _, descendant in model:GetDescendants() do
-		if descendant:IsA("BasePart") then
-			return descendant
-		end
-	end
-
-	return nil
-end
+local M = {}
 
 local function getOrCreateRemotesFolder(): Folder
 	local folder = ReplicatedStorage:FindFirstChild(REMOTES_NAME)
@@ -64,9 +27,9 @@ local function getOrCreateRemotesFolder(): Folder
 	return folder
 end
 
-local function ensureSpinResultRemote(): RemoteEvent
+local function ensureRemoteEvent(name: string): RemoteEvent
 	local folder = getOrCreateRemotesFolder()
-	local existing = folder:FindFirstChild(SPIN_RESULT_NAME)
+	local existing = folder:FindFirstChild(name)
 	if existing and existing:IsA("RemoteEvent") then
 		return existing
 	end
@@ -74,53 +37,20 @@ local function ensureSpinResultRemote(): RemoteEvent
 		existing:Destroy()
 	end
 	local remote = Instance.new("RemoteEvent")
-	remote.Name = SPIN_RESULT_NAME
+	remote.Name = name
 	remote.Parent = folder
 	return remote
 end
 
 local function fireSpinResult(player: Player, payload: { [string]: unknown })
-	ensureSpinResultRemote():FireClient(player, payload)
+	ensureRemoteEvent(SPIN_RESULT_NAME):FireClient(player, payload)
 end
 
 local function rollAmount(): number
 	return math.random(1, 6) * 25
 end
 
-local function getOrCreatePrompt(part: BasePart): ProximityPrompt
-	local existing = part:FindFirstChild(PROMPT_NAME)
-	if existing and existing:IsA("ProximityPrompt") then
-		return existing
-	end
-	if existing then
-		existing:Destroy()
-	end
-
-	local prompt = Instance.new("ProximityPrompt")
-	prompt.Name = PROMPT_NAME
-	prompt.ActionText = PROMPT_ACTION
-	prompt.ObjectText = PROMPT_OBJECT
-	prompt.HoldDuration = PROMPT_HOLD_DURATION
-	prompt.MaxActivationDistance = PROMPT_MAX_DISTANCE
-	prompt.RequiresLineOfSight = false
-	prompt.Style = Enum.ProximityPromptStyle.Default
-	prompt.Parent = part
-	return prompt
-end
-
-local spinTarget = findSpinTarget()
-if not spinTarget then
-	warn("[Lobby] Could not find Daily Spin model (Model or Part).")
-	return
-end
-
-local spinPart = getSpinPart(spinTarget)
-if not spinPart then
-	warn("[Lobby] Daily Spin has no BasePart to attach prompt to.")
-	return
-end
-
-getOrCreatePrompt(spinPart).Triggered:Connect(function(player: Player)
+function M.requestSpin(player: Player)
 	if not player or not player:IsDescendantOf(Players) then
 		return
 	end
@@ -167,4 +97,22 @@ getOrCreatePrompt(spinPart).Triggered:Connect(function(player: Player)
 		amount = amount,
 		message = string.format("You won $%d!", amount),
 	})
-end)
+end
+
+function M.bindRequestRemotes()
+	if didBind then
+		return
+	end
+	didBind = true
+
+	local requestRemote = ensureRemoteEvent(REQUEST_SPIN_NAME)
+	requestRemote.OnServerEvent:Connect(function(player: Player)
+		M.requestSpin(player)
+	end)
+
+	Players.PlayerRemoving:Connect(function(player: Player)
+		lastTriggerAtByUserId[player.UserId] = nil
+	end)
+end
+
+return M
