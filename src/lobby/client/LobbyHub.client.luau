@@ -29,6 +29,7 @@ local requestDailySpin: RemoteEvent? = nil
 type SubPanelId = "daily" | "shop" | nil
 
 local activeSubPanel: SubPanelId = nil
+local activeModeSelect = false
 local activeMapSelect = false
 local spinBusy = false
 local joiningMapId: string? = nil
@@ -438,7 +439,247 @@ buyButton.Parent = shopHost
 addCorner(buyButton, 10)
 addStroke(buyButton, RewardUiColors.FISH_RARE_BLUE, 2, 0.25)
 
--- Fullscreen map selection (Play flow).
+type ModePanelOptions = {
+	name: string,
+	label: string,
+	image: string,
+	placeholderColor: Color3,
+	layoutOrder: number,
+	parent: Instance,
+	zIndex: number,
+}
+
+local function makeModePanel(options: ModePanelOptions): TextButton
+	local tileZ = options.zIndex
+	local tile = Instance.new("TextButton")
+	tile.Name = options.name
+	tile.Size = UDim2.fromOffset(100, 100)
+	tile.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
+	tile.BackgroundTransparency = 0
+	tile.Text = ""
+	tile.AutoButtonColor = true
+	tile.LayoutOrder = options.layoutOrder
+	tile.ZIndex = tileZ
+	tile.Parent = options.parent
+	addCorner(tile, 12)
+	addStroke(tile, LobbyUiConfig.MODE_PANEL_STROKE, 2, 0.2)
+
+	local thumbHolder = Instance.new("Frame")
+	thumbHolder.Name = "Thumb"
+	thumbHolder.Position = UDim2.fromOffset(8, 8)
+	thumbHolder.Size = UDim2.new(1, -16, 1, -52)
+	thumbHolder.BackgroundTransparency = 1
+	thumbHolder.ClipsDescendants = true
+	thumbHolder.Active = false
+	thumbHolder.ZIndex = tileZ + 1
+	thumbHolder.Parent = tile
+	addCorner(thumbHolder, 10)
+
+	if options.image ~= "" then
+		local thumb = Instance.new("ImageLabel")
+		thumb.Name = "Image"
+		thumb.Size = UDim2.fromScale(1, 1)
+		thumb.BackgroundTransparency = 1
+		thumb.Image = options.image
+		thumb.ScaleType = Enum.ScaleType.Fit
+		thumb.ZIndex = tileZ + 2
+		thumb.Parent = thumbHolder
+	else
+		local placeholder = Instance.new("Frame")
+		placeholder.Name = "Placeholder"
+		placeholder.Size = UDim2.fromScale(1, 1)
+		placeholder.BackgroundColor3 = options.placeholderColor
+		placeholder.BorderSizePixel = 0
+		placeholder.ZIndex = tileZ + 2
+		placeholder.Parent = thumbHolder
+		addCorner(placeholder, 10)
+	end
+
+	local footer = Instance.new("Frame")
+	footer.Name = "Footer"
+	footer.AnchorPoint = Vector2.new(0, 1)
+	footer.Position = UDim2.new(0, 8, 1, -8)
+	footer.Size = UDim2.new(1, -16, 0, 40)
+	footer.BackgroundTransparency = 1
+	footer.Active = false
+	footer.ZIndex = tileZ + 1
+	footer.Parent = tile
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Title"
+	label.Size = UDim2.fromScale(1, 1)
+	label.TextXAlignment = Enum.TextXAlignment.Center
+	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.Text = options.label
+	label.Font = LobbyUiConfig.HUB_MENU_FONT
+	label.TextSize = 28
+	label.TextStrokeTransparency = 0.4
+	label.TextStrokeColor3 = Color3.new(0, 0, 0)
+	label.BackgroundTransparency = 1
+	label.ZIndex = tileZ + 3
+	label.Parent = footer
+
+	return tile
+end
+
+-- Fullscreen mode selection (Play flow step 1).
+local modeInset = LobbyUiConfig.MODE_SELECT_OVERLAY_INSET
+local modeSelectOverlay = Instance.new("Frame")
+modeSelectOverlay.Name = "ModeSelectOverlay"
+modeSelectOverlay.Size = UDim2.fromScale(1, 1)
+modeSelectOverlay.BackgroundTransparency = 1
+modeSelectOverlay.Visible = false
+modeSelectOverlay.ZIndex = LobbyUiConfig.Z_MODE_SELECT
+modeSelectOverlay.Parent = screenGui
+
+local modeSelectScrim = Instance.new("TextButton")
+modeSelectScrim.Name = "Scrim"
+modeSelectScrim.Size = UDim2.fromScale(1, 1)
+modeSelectScrim.BackgroundColor3 = Color3.new(0, 0, 0)
+modeSelectScrim.BackgroundTransparency = LobbyUiConfig.MAP_SELECT_SCRIM_TRANSPARENCY
+modeSelectScrim.Text = ""
+modeSelectScrim.AutoButtonColor = false
+modeSelectScrim.ZIndex = LobbyUiConfig.Z_MODE_SELECT
+modeSelectScrim.Parent = modeSelectOverlay
+
+local modeSelectContent = Instance.new("Frame")
+modeSelectContent.Name = "Content"
+modeSelectContent.AnchorPoint = Vector2.new(0.5, 0.5)
+modeSelectContent.Position = UDim2.fromScale(0.5, 0.5)
+modeSelectContent.Size = UDim2.new(1, -modeInset * 2, 1, -modeInset * 2)
+modeSelectContent.BackgroundColor3 = LobbyUiConfig.MAP_SELECT_CONTENT_COLOR
+modeSelectContent.BackgroundTransparency = 0
+modeSelectContent.ClipsDescendants = true
+modeSelectContent.ZIndex = LobbyUiConfig.Z_MODE_SELECT + 1
+modeSelectContent.Parent = modeSelectOverlay
+addCorner(modeSelectContent, 14)
+addStroke(modeSelectContent, LobbyUiConfig.SUB_PANEL_STROKE, 2, 0.2)
+
+local modeSelectHeader = Instance.new("Frame")
+modeSelectHeader.Name = "Header"
+modeSelectHeader.Size = UDim2.new(1, 0, 0, 56)
+modeSelectHeader.BackgroundColor3 = LobbyUiConfig.MAP_SELECT_HEADER_COLOR
+modeSelectHeader.BorderSizePixel = 0
+modeSelectHeader.ZIndex = LobbyUiConfig.Z_MODE_SELECT + 2
+modeSelectHeader.Parent = modeSelectContent
+
+local modeSelectHeaderCorner = Instance.new("UICorner")
+modeSelectHeaderCorner.CornerRadius = UDim.new(0, 14)
+modeSelectHeaderCorner.Parent = modeSelectHeader
+
+local modeSelectTitle = Instance.new("TextLabel")
+modeSelectTitle.Name = "Title"
+modeSelectTitle.Position = UDim2.fromOffset(20, 10)
+modeSelectTitle.Size = UDim2.new(1, -72, 1, -12)
+modeSelectTitle.TextXAlignment = Enum.TextXAlignment.Left
+modeSelectTitle.TextColor3 = LobbyUiConfig.SUB_TITLE_TEXT
+modeSelectTitle.Text = LobbyUiConfig.MODE_SELECT_TITLE
+styleLabel(modeSelectTitle, 26, true)
+modeSelectTitle.Parent = modeSelectHeader
+
+local modeSelectClose = Instance.new("TextButton")
+modeSelectClose.Name = "Close"
+modeSelectClose.AnchorPoint = Vector2.new(1, 0.5)
+modeSelectClose.Position = UDim2.new(1, -14, 0.5, 0)
+modeSelectClose.Size = UDim2.fromOffset(40, 40)
+modeSelectClose.BackgroundColor3 = Color3.fromRGB(80, 95, 115)
+modeSelectClose.Font = Enum.Font.GothamBold
+modeSelectClose.TextSize = 22
+modeSelectClose.TextColor3 = Color3.fromRGB(255, 255, 255)
+modeSelectClose.Text = "X"
+modeSelectClose.ZIndex = LobbyUiConfig.Z_MODE_SELECT + 4
+modeSelectClose.AutoButtonColor = true
+modeSelectClose.Parent = modeSelectHeader
+addCorner(modeSelectClose, 8)
+
+local modePanelBody = Instance.new("Frame")
+modePanelBody.Name = "ModePanels"
+modePanelBody.Position = UDim2.fromOffset(24, 72)
+modePanelBody.Size = UDim2.new(1, -48, 1, -96)
+modePanelBody.BackgroundTransparency = 1
+modePanelBody.ZIndex = LobbyUiConfig.Z_MODE_SELECT + 2
+modePanelBody.Parent = modeSelectContent
+
+local modePanelZ = LobbyUiConfig.Z_MODE_SELECT + 4
+local collectModePanel = makeModePanel({
+	name = "Collect",
+	label = LobbyUiConfig.MODE_PANEL_COLLECT_LABEL,
+	image = LobbyUiConfig.MODE_PANEL_COLLECT_IMAGE,
+	placeholderColor = LobbyUiConfig.MODE_PANEL_COLLECT_PLACEHOLDER_COLOR,
+	layoutOrder = 1,
+	parent = modePanelBody,
+	zIndex = modePanelZ,
+})
+
+local battleModePanel = makeModePanel({
+	name = "Battle",
+	label = LobbyUiConfig.MODE_PANEL_BATTLE_LABEL,
+	image = LobbyUiConfig.MODE_PANEL_BATTLE_IMAGE,
+	placeholderColor = LobbyUiConfig.MODE_PANEL_BATTLE_PLACEHOLDER_COLOR,
+	layoutOrder = 2,
+	parent = modePanelBody,
+	zIndex = modePanelZ,
+})
+battleModePanel.AutoButtonColor = false
+battleModePanel.Active = false
+
+local function isCompactModeSelect(): boolean
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return false
+	end
+	local viewport = camera.ViewportSize
+	return viewport.X < 700 or viewport.Y < 500
+end
+
+local function layoutModeSelectPanels()
+	local compact = isCompactModeSelect()
+	local overlayInset = if compact
+		then LobbyUiConfig.MODE_SELECT_OVERLAY_INSET_MOBILE
+		else LobbyUiConfig.MODE_SELECT_OVERLAY_INSET
+	modeSelectContent.Size = UDim2.new(1, -overlayInset * 2, 1, -overlayInset * 2)
+
+	local bodyPadX = if compact then 12 else 24
+	local bodyPadTop = if compact then 60 else 72
+	local bodyPadBottom = if compact then 72 else 96
+	modePanelBody.Position = UDim2.fromOffset(bodyPadX, bodyPadTop)
+	modePanelBody.Size = UDim2.new(1, -bodyPadX * 2, 1, -(bodyPadTop + bodyPadBottom))
+
+	local bodySize = modePanelBody.AbsoluteSize
+	if bodySize.X < 2 or bodySize.Y < 2 then
+		return
+	end
+
+	local gap = if compact then 12 else LobbyUiConfig.MODE_PANEL_GAP
+	local maxHeight = LobbyUiConfig.MODE_PANEL_HEIGHT
+	local panelHeight = math.clamp(math.min(maxHeight, bodySize.Y), LobbyUiConfig.MODE_PANEL_MIN_HEIGHT, maxHeight)
+	local panelWidth = math.max(80, math.floor((bodySize.X - gap) / 2))
+
+	local totalWidth = panelWidth * 2 + gap
+	local originX = math.floor((bodySize.X - totalWidth) / 2)
+	local originY = math.floor((bodySize.Y - panelHeight) / 2)
+
+	collectModePanel.Size = UDim2.fromOffset(panelWidth, panelHeight)
+	collectModePanel.Position = UDim2.fromOffset(originX, originY)
+	battleModePanel.Size = UDim2.fromOffset(panelWidth, panelHeight)
+	battleModePanel.Position = UDim2.fromOffset(originX + panelWidth + gap, originY)
+
+	local labelSize = if compact then 18 elseif panelHeight < 200 then 22 else 28
+	for _, panel in { collectModePanel, battleModePanel } do
+		local footer = panel:FindFirstChild("Footer")
+		if footer then
+			local title = footer:FindFirstChild("Title")
+			if title and title:IsA("TextLabel") then
+				title.TextSize = labelSize
+			end
+		end
+	end
+end
+
+modePanelBody:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutModeSelectPanels)
+
+-- Fullscreen map selection (Play flow step 2).
 local inset = LobbyUiConfig.MAP_SELECT_OVERLAY_INSET
 local mapSelectOverlay = Instance.new("Frame")
 mapSelectOverlay.Name = "MapSelectOverlay"
@@ -554,16 +795,23 @@ local function closeMapSelect()
 	mapSelectOverlay.Visible = false
 end
 
+local function closeModeSelect()
+	activeModeSelect = false
+	modeSelectOverlay.Visible = false
+end
+
 local function closeSubPanel()
 	activeSubPanel = nil
 	subBackdrop.Visible = false
 	subPanel.Visible = false
 	hideAllSubHosts()
+	closeModeSelect()
 	closeMapSelect()
 	setStatus(nil, false)
 end
 
 local function openSubPanel(panelId: SubPanelId, title: string)
+	closeModeSelect()
 	closeMapSelect()
 	activeSubPanel = panelId
 	subTitle.Text = title
@@ -777,9 +1025,29 @@ local function openMapSelect()
 	mapSelectOverlay.Visible = true
 end
 
+local function openModeSelect()
+	activeSubPanel = nil
+	subBackdrop.Visible = false
+	subPanel.Visible = false
+	hideAllSubHosts()
+	closeMapSelect()
+	setStatus(nil, false)
+	activeModeSelect = true
+	modeSelectOverlay.Visible = true
+	task.defer(layoutModeSelectPanels)
+end
+
 playButton.MouseButton1Click:Connect(function()
+	openModeSelect()
+end)
+
+collectModePanel.MouseButton1Click:Connect(function()
+	closeModeSelect()
 	openMapSelect()
 end)
+
+modeSelectClose.MouseButton1Click:Connect(closeModeSelect)
+modeSelectScrim.MouseButton1Click:Connect(closeModeSelect)
 
 dailyButton.MouseButton1Click:Connect(function()
 	closeSubPanel()
