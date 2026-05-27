@@ -11,6 +11,8 @@ local RewardUiColors = require(shared:WaitForChild("RewardUiColors"))
 
 local FishCollectionInventory = require(script.Parent:WaitForChild("FishCollectionInventory"))
 local LobbyHubActions = require(script.Parent:WaitForChild("LobbyHubActions"))
+local LobbyTouchInputSuppress = require(script.Parent:WaitForChild("LobbyTouchInputSuppress"))
+local BattleQueue = require(script.Parent:WaitForChild("BattleQueue"))
 
 local REMOTES_NAME = "LobbyRemotes"
 local REQUEST_JOIN_MAP = "RequestJoinMap"
@@ -31,6 +33,7 @@ type SubPanelId = "daily" | "shop" | nil
 local activeSubPanel: SubPanelId = nil
 local activeModeSelect = false
 local activeMapSelect = false
+local mapSelectMode: "join" | "collection" = "join"
 local spinBusy = false
 local joiningMapId: string? = nil
 
@@ -38,9 +41,11 @@ local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "LobbyHub"
 screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 40
+screenGui.DisplayOrder = LobbyUiConfig.DISPLAY_ORDER_HUB
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.Parent = playerGui
+
+LobbyTouchInputSuppress.setHolder("lobby-hub", true)
 
 local function addCorner(parent: GuiObject, radius: number)
 	local corner = Instance.new("UICorner")
@@ -77,6 +82,7 @@ type HubMenuButtonOptions = {
 	layoutOrder: number,
 	parent: Instance,
 	titleSize: number?,
+	image: string?,
 }
 
 local function makeHubMenuButton(options: HubMenuButtonOptions): TextButton
@@ -84,13 +90,31 @@ local function makeHubMenuButton(options: HubMenuButtonOptions): TextButton
 	local button = Instance.new("TextButton")
 	button.Name = options.name
 	button.Size = UDim2.fromOffset(options.width, options.height)
-	button.BackgroundColor3 = theme.color
-	button.BackgroundTransparency = 0
 	button.Text = ""
-	button.AutoButtonColor = true
 	button.LayoutOrder = options.layoutOrder
 	button.ZIndex = LobbyUiConfig.Z_BUTTONS
 	button.Parent = options.parent
+
+	local image = options.image
+	if image and image ~= "" then
+		button.BackgroundTransparency = 1
+		button.AutoButtonColor = false
+
+		local art = Instance.new("ImageLabel")
+		art.Name = "Art"
+		art.Size = UDim2.fromScale(1, 1)
+		art.BackgroundTransparency = 1
+		art.Image = image
+		art.ScaleType = Enum.ScaleType.Fit
+		art.ZIndex = LobbyUiConfig.Z_BUTTONS + 1
+		art.Parent = button
+
+		return button
+	end
+
+	button.BackgroundColor3 = theme.color
+	button.BackgroundTransparency = 0
+	button.AutoButtonColor = true
 	addCorner(button, LobbyUiConfig.BUTTON_CORNER_RADIUS)
 	addStroke(button, theme.stroke, LobbyUiConfig.BUTTON_OUTER_STROKE_THICKNESS, 0.15)
 
@@ -205,20 +229,25 @@ local playButton = makeHubMenuButton({
 	width = hubButtonWidth,
 	height = LobbyUiConfig.PLAY_BUTTON_HEIGHT,
 	layoutOrder = 1,
-	parent = buttonColumn,
+	parent = buttonLayer,
 	titleSize = 26,
 })
+playButton.AnchorPoint = Vector2.new(0.5, 0.5)
+playButton.Position = LobbyUiConfig.PLAY_BUTTON_POSITION
 
+local dailyButtonSize = LobbyUiConfig.DAILY_BUTTON_SIZE
 local dailyButton = makeHubMenuButton({
 	name = "Daily",
-	title = "Daily Rewards",
+	title = "Daily",
 	theme = LobbyUiConfig.DAILY_BUTTON,
-	width = hubButtonWidth,
-	height = LobbyUiConfig.MENU_BUTTON_HEIGHT,
+	width = dailyButtonSize,
+	height = dailyButtonSize,
 	layoutOrder = 2,
-	parent = buttonColumn,
-	titleSize = 17,
+	parent = buttonLayer,
+	titleSize = 14,
 })
+dailyButton.AnchorPoint = Vector2.new(1, 0)
+dailyButton.Position = LobbyUiConfig.DAILY_BUTTON_POSITION
 
 local shopButton = makeHubMenuButton({
 	name = "Shop",
@@ -233,14 +262,16 @@ local shopButton = makeHubMenuButton({
 
 local collectionButton = makeHubMenuButton({
 	name = "Collection",
-	title = "Collection",
+	title = "",
 	theme = LobbyUiConfig.COLLECTION_BUTTON,
+	image = LobbyUiConfig.COLLECTION_BUTTON_IMAGE,
 	width = hubButtonWidth,
-	height = LobbyUiConfig.MENU_BUTTON_HEIGHT,
+	height = LobbyUiConfig.PLAY_BUTTON_HEIGHT,
 	layoutOrder = 4,
-	parent = buttonColumn,
-	titleSize = 17,
+	parent = buttonLayer,
 })
+collectionButton.AnchorPoint = Vector2.new(0.5, 0.5)
+collectionButton.Position = LobbyUiConfig.COLLECTION_BUTTON_POSITION
 
 dailyButton.Visible = LobbyUiConfig.SHOW_DAILY_BUTTON
 shopButton.Visible = LobbyUiConfig.SHOW_SHOP_BUTTON
@@ -621,8 +652,8 @@ local battleModePanel = makeModePanel({
 	parent = modePanelBody,
 	zIndex = modePanelZ,
 })
-battleModePanel.AutoButtonColor = false
-battleModePanel.Active = false
+battleModePanel.AutoButtonColor = true
+battleModePanel.Active = LobbyUiConfig.SHOW_BATTLE_MODE
 
 local function isCompactModeSelect(): boolean
 	local camera = workspace.CurrentCamera
@@ -785,6 +816,13 @@ local function setStatus(text: string?, visible: boolean?)
 	end
 end
 
+local function syncHubDisplayOrder()
+	local overlayOpen = activeModeSelect or activeMapSelect or activeSubPanel ~= nil
+	screenGui.DisplayOrder = if overlayOpen
+		then LobbyUiConfig.DISPLAY_ORDER_HUB_OVERLAY
+		else LobbyUiConfig.DISPLAY_ORDER_HUB
+end
+
 local function hideAllSubHosts()
 	dailyHost.Visible = false
 	shopHost.Visible = false
@@ -793,11 +831,13 @@ end
 local function closeMapSelect()
 	activeMapSelect = false
 	mapSelectOverlay.Visible = false
+	syncHubDisplayOrder()
 end
 
 local function closeModeSelect()
 	activeModeSelect = false
 	modeSelectOverlay.Visible = false
+	syncHubDisplayOrder()
 end
 
 local function closeSubPanel()
@@ -808,6 +848,7 @@ local function closeSubPanel()
 	closeModeSelect()
 	closeMapSelect()
 	setStatus(nil, false)
+	syncHubDisplayOrder()
 end
 
 local function openSubPanel(panelId: SubPanelId, title: string)
@@ -824,6 +865,7 @@ local function openSubPanel(panelId: SubPanelId, title: string)
 	elseif panelId == "shop" then
 		shopHost.Visible = true
 	end
+	syncHubDisplayOrder()
 end
 
 LobbyHubActions.registerOpenBuyCoins(function()
@@ -872,15 +914,32 @@ local function hasMapThumbnail(map: MatchMaps.MatchMap): boolean
 	return typeof(image) == "string" and image ~= ""
 end
 
-local function updateMapScrollCanvas()
+local function updateMapScrollCanvas(mapCount: number)
 	local columns = LobbyUiConfig.MAP_SELECT_COLUMNS
 	local pad = LobbyUiConfig.MAP_TILE_PADDING
 	local tileH = LobbyUiConfig.MAP_TILE_HEIGHT
-	local maps = MatchMaps.getAll()
-	local rowCount = math.max(1, math.ceil(#maps / columns))
+	local rowCount = math.max(1, math.ceil(math.max(mapCount, 1) / columns))
 	local gridHeight = rowCount * (tileH + pad) + pad
 	mapGrid.Size = UDim2.new(1, 0, 0, gridHeight)
 	mapScroll.CanvasSize = UDim2.new(0, 0, 0, gridHeight)
+end
+
+local function getMapsForSelect(): { MatchMaps.MatchMap }
+	if mapSelectMode == "collection" then
+		local collectedIds = FishCollectionInventory.getCollectedMapIds()
+		local idSet: { [string]: boolean } = { [MatchMaps.DEFAULT_MAP_ID] = true }
+		for _, id in collectedIds do
+			idSet[id] = true
+		end
+		local filtered: { MatchMaps.MatchMap } = {}
+		for _, map in MatchMaps.getAll() do
+			if idSet[map.id] then
+				table.insert(filtered, map)
+			end
+		end
+		return filtered
+	end
+	return MatchMaps.getAll()
 end
 
 local function buildMapTiles()
@@ -890,12 +949,27 @@ local function buildMapTiles()
 		end
 	end
 
-	local maps = MatchMaps.getAll()
-
+	local maps = getMapsForSelect()
 	local tileZ = LobbyUiConfig.Z_MAP_SELECT + 4
 
+	if mapSelectMode == "collection" and #maps == 0 then
+		local emptyLabel = Instance.new("TextLabel")
+		emptyLabel.Name = "EmptyState"
+		emptyLabel.Size = UDim2.new(1, 0, 0, 80)
+		emptyLabel.BackgroundTransparency = 1
+		emptyLabel.Font = Enum.Font.GothamMedium
+		emptyLabel.TextSize = 20
+		emptyLabel.TextColor3 = LobbyUiConfig.SUB_BODY_TEXT
+		emptyLabel.Text = LobbyUiConfig.COLLECTION_MAP_SELECT_EMPTY
+		emptyLabel.TextWrapped = true
+		emptyLabel.ZIndex = tileZ
+		emptyLabel.Parent = mapGrid
+		updateMapScrollCanvas(0)
+		return
+	end
+
 	for i, map in maps do
-		local available = map.placeId ~= 0
+		local available = if mapSelectMode == "collection" then true else map.placeId ~= 0
 		local tile = Instance.new("TextButton")
 		tile.Name = "Map_" .. map.id
 		tile.BackgroundColor3 = if available then Color3.fromRGB(22, 28, 38) else Color3.fromRGB(26, 30, 38)
@@ -967,9 +1041,9 @@ local function buildMapTiles()
 		nameLabel.Size = UDim2.new(1, 0, 0, 18)
 		nameLabel.TextXAlignment = Enum.TextXAlignment.Center
 		nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
-		nameLabel.TextColor3 = if available then Color3.fromRGB(255, 220, 80) else Color3.fromRGB(160, 168, 178)
+		nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 		nameLabel.Text = map.displayName
-		nameLabel.Font = Enum.Font.GothamBold
+		nameLabel.Font = LobbyUiConfig.HUB_MENU_FONT
 		nameLabel.TextSize = 15
 		nameLabel.TextStrokeTransparency = 0.5
 		nameLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
@@ -977,24 +1051,76 @@ local function buildMapTiles()
 		nameLabel.ZIndex = tileZ + 3
 		nameLabel.Parent = footer
 
-		local feeLabel = Instance.new("TextLabel")
-		feeLabel.Name = "Fee"
-		feeLabel.Position = UDim2.fromOffset(0, 18)
-		feeLabel.Size = UDim2.new(1, 0, 0, 16)
-		feeLabel.TextXAlignment = Enum.TextXAlignment.Center
-		feeLabel.TextColor3 = LobbyUiConfig.SUB_BODY_TEXT
-		feeLabel.Text = if available
-			then string.format("Entry: $%d", map.entryFee)
-			else "Unavailable"
-		feeLabel.Font = Enum.Font.GothamMedium
-		feeLabel.TextSize = 13
-		feeLabel.TextStrokeTransparency = 0.6
-		feeLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-		feeLabel.BackgroundTransparency = 1
-		feeLabel.ZIndex = tileZ + 3
-		feeLabel.Parent = footer
+		local feeRow = Instance.new("Frame")
+		feeRow.Name = "Fee"
+		feeRow.Position = UDim2.fromOffset(0, 18)
+		feeRow.Size = UDim2.new(1, 0, 0, 16)
+		feeRow.BackgroundTransparency = 1
+		feeRow.ZIndex = tileZ + 3
+		feeRow.Parent = footer
 
-		if available then
+		local function styleFeeText(label: TextLabel)
+			label.Font = Enum.Font.GothamMedium
+			label.TextSize = 13
+			label.TextStrokeTransparency = 0.6
+			label.TextStrokeColor3 = Color3.new(0, 0, 0)
+			label.BackgroundTransparency = 1
+			label.ZIndex = tileZ + 3
+		end
+
+		if mapSelectMode == "collection" then
+			local ownedUnique, total = FishCollectionInventory.getMapProgress(map.id)
+			local feeLabel = Instance.new("TextLabel")
+			feeLabel.Size = UDim2.fromScale(1, 1)
+			feeLabel.TextXAlignment = Enum.TextXAlignment.Center
+			feeLabel.Text = string.format("%d / %d", ownedUnique, total)
+			feeLabel.TextColor3 = RewardUiColors.PROFIT_GREEN
+			styleFeeText(feeLabel)
+			feeLabel.Parent = feeRow
+		else
+			local feeLayout = Instance.new("UIListLayout")
+			feeLayout.FillDirection = Enum.FillDirection.Horizontal
+			feeLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+			feeLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+			feeLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			feeLayout.Padding = UDim.new(0, 2)
+			feeLayout.Parent = feeRow
+
+			local entryPrefix = Instance.new("TextLabel")
+			entryPrefix.Name = "EntryPrefix"
+			entryPrefix.AutomaticSize = Enum.AutomaticSize.XY
+			entryPrefix.TextColor3 = LobbyUiConfig.SUB_BODY_TEXT
+			entryPrefix.Text = "Entry:"
+			entryPrefix.LayoutOrder = 1
+			styleFeeText(entryPrefix)
+			entryPrefix.Parent = feeRow
+
+			local coinIcon = Instance.new("ImageLabel")
+			coinIcon.Name = "CoinIcon"
+			coinIcon.Size = UDim2.fromOffset(14, 14)
+			coinIcon.BackgroundTransparency = 1
+			coinIcon.Image = LobbyUiConfig.CASH_BAR_COIN_IMAGE
+			coinIcon.ScaleType = Enum.ScaleType.Fit
+			coinIcon.LayoutOrder = 2
+			coinIcon.ZIndex = tileZ + 3
+			coinIcon.Parent = feeRow
+
+			local amountLabel = Instance.new("TextLabel")
+			amountLabel.Name = "Amount"
+			amountLabel.AutomaticSize = Enum.AutomaticSize.XY
+			amountLabel.TextColor3 = LobbyUiConfig.SUB_BODY_TEXT
+			amountLabel.Text = tostring(map.entryFee)
+			amountLabel.LayoutOrder = 3
+			styleFeeText(amountLabel)
+			amountLabel.Parent = feeRow
+		end
+
+		if mapSelectMode == "collection" then
+			tile.MouseButton1Click:Connect(function()
+				closeMapSelect()
+				FishCollectionInventory.openPanelForMap(map.id)
+			end)
+		elseif available then
 			tile.MouseButton1Click:Connect(function()
 				if joiningMapId then
 					return
@@ -1011,7 +1137,7 @@ local function buildMapTiles()
 		end
 	end
 
-	updateMapScrollCanvas()
+	updateMapScrollCanvas(#maps)
 end
 
 local function openMapSelect()
@@ -1023,6 +1149,19 @@ local function openMapSelect()
 	buildMapTiles()
 	activeMapSelect = true
 	mapSelectOverlay.Visible = true
+	syncHubDisplayOrder()
+end
+
+local function openJoinMapSelect()
+	mapSelectMode = "join"
+	mapSelectTitle.Text = LobbyUiConfig.MAP_SELECT_TITLE
+	openMapSelect()
+end
+
+local function openCollectionMapSelect()
+	mapSelectMode = "collection"
+	mapSelectTitle.Text = LobbyUiConfig.COLLECTION_SELECT_TITLE
+	openMapSelect()
 end
 
 local function openModeSelect()
@@ -1034,6 +1173,7 @@ local function openModeSelect()
 	setStatus(nil, false)
 	activeModeSelect = true
 	modeSelectOverlay.Visible = true
+	syncHubDisplayOrder()
 	task.defer(layoutModeSelectPanels)
 end
 
@@ -1043,7 +1183,12 @@ end)
 
 collectModePanel.MouseButton1Click:Connect(function()
 	closeModeSelect()
-	openMapSelect()
+	openJoinMapSelect()
+end)
+
+battleModePanel.MouseButton1Click:Connect(function()
+	closeModeSelect()
+	BattleQueue.open()
 end)
 
 modeSelectClose.MouseButton1Click:Connect(closeModeSelect)
@@ -1061,7 +1206,7 @@ end)
 
 collectionButton.MouseButton1Click:Connect(function()
 	closeSubPanel()
-	FishCollectionInventory.openPanel()
+	openCollectionMapSelect()
 end)
 
 subClose.MouseButton1Click:Connect(closeSubPanel)
@@ -1170,6 +1315,8 @@ buildMapTiles()
 task.spawn(function()
 	local ok, err = pcall(function()
 		FishCollectionInventory.init()
+		FishCollectionInventory.setOnCloseToMapPicker(openCollectionMapSelect)
+		BattleQueue.init()
 		bindRemotes()
 	end)
 	if not ok then

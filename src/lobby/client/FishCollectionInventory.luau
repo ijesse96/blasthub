@@ -9,6 +9,8 @@ local RewardUiColors = require(shared:WaitForChild("RewardUiColors"))
 local SplashFishCatalog = require(shared:WaitForChild("SplashFishCatalog"))
 local SplashKillFishFrames = require(shared:WaitForChild("SplashKillFishFrames"))
 
+local LobbyTouchInputSuppress = require(script.Parent:WaitForChild("LobbyTouchInputSuppress"))
+
 type FishTier = SplashFishCatalog.FishTier
 
 local TIERS: { FishTier } = SplashFishCatalog.getOrderedTiers()
@@ -40,6 +42,17 @@ local ownedByMap: OwnedByMap = {}
 local activeMapId = "main"
 local panelOpen = false
 local didInit = false
+local openedFromMapPicker = false
+local onCloseToMapPicker: (() -> ())? = nil
+
+local SCROLL_WITH_TABS = {
+	position = UDim2.fromOffset(12, 100),
+	size = UDim2.new(1, -24, 1, -148),
+}
+local SCROLL_NO_TABS = {
+	position = UDim2.fromOffset(12, 64),
+	size = UDim2.new(1, -24, 1, -112),
+}
 
 local screenGui: ScreenGui
 local backdrop: Frame
@@ -47,6 +60,7 @@ local panel: Frame
 local scroll: ScrollingFrame
 local bodyLayout: UIListLayout
 local footer: TextLabel
+local mapTabBar: Frame
 local mapTabsById: { [string]: TextButton } = {}
 
 local function sanitizeOwnedSnapshot(raw: unknown): OwnedByMap
@@ -317,12 +331,41 @@ local function buildMapTabs(mapTabBar: Frame)
 	end
 end
 
+local function applyTabBarVisible(visible: boolean)
+	mapTabBar.Visible = visible
+	if visible then
+		scroll.Position = SCROLL_WITH_TABS.position
+		scroll.Size = SCROLL_WITH_TABS.size
+	else
+		scroll.Position = SCROLL_NO_TABS.position
+		scroll.Size = SCROLL_NO_TABS.size
+	end
+end
+
 local function setPanelOpen(open: boolean)
 	panelOpen = open
 	backdrop.Visible = open
 	panel.Visible = open
+	LobbyTouchInputSuppress.setHolder("fish-collection", open)
 	if open then
 		renderCollection()
+	elseif openedFromMapPicker then
+		openedFromMapPicker = false
+		applyTabBarVisible(true)
+	end
+end
+
+local function handleCloseClick()
+	if openedFromMapPicker then
+		openedFromMapPicker = false
+		applyTabBarVisible(true)
+		setPanelOpen(false)
+		local callback = onCloseToMapPicker
+		if callback then
+			callback()
+		end
+	else
+		setPanelOpen(false)
 	end
 end
 
@@ -339,7 +382,7 @@ function M.init()
 	screenGui.Name = "FishCollectionInventory"
 	screenGui.ResetOnSpawn = false
 	screenGui.IgnoreGuiInset = true
-	screenGui.DisplayOrder = 55
+	screenGui.DisplayOrder = LobbyUiConfig.DISPLAY_ORDER_HUB_OVERLAY
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	screenGui.Parent = playerGui
 
@@ -414,7 +457,7 @@ function M.init()
 	closeCorner.CornerRadius = UDim.new(0, 8)
 	closeCorner.Parent = closeButton
 
-	local mapTabBar = Instance.new("Frame")
+	mapTabBar = Instance.new("Frame")
 	mapTabBar.Name = "MapTabs"
 	mapTabBar.Position = UDim2.fromOffset(16, 56)
 	mapTabBar.Size = UDim2.new(1, -32, 0, 36)
@@ -460,9 +503,7 @@ function M.init()
 	footer.Text = "Collected 0 / 0"
 	footer.Parent = panel
 
-	closeButton.MouseButton1Click:Connect(function()
-		setPanelOpen(false)
-	end)
+	closeButton.MouseButton1Click:Connect(handleCloseClick)
 
 	local snapshotRemote = ReplicatedStorage:WaitForChild("FishCollectionSnapshot", 60)
 	if snapshotRemote and snapshotRemote:IsA("RemoteEvent") then
@@ -477,15 +518,54 @@ function M.init()
 	renderCollection()
 end
 
+function M.getCollectedMapIds(): { string }
+	local ids: { string } = {}
+	for mapId in ownedByMap do
+		table.insert(ids, mapId)
+	end
+	table.sort(ids, function(a, b)
+		local mapA = MatchMaps.getMapById(a)
+		local mapB = MatchMaps.getMapById(b)
+		local nameA = if mapA then mapA.displayName else a
+		local nameB = if mapB then mapB.displayName else b
+		return nameA < nameB
+	end)
+	return ids
+end
+
+function M.getMapProgress(mapId: string): (number, number)
+	return countOwnedInMap(mapId), SplashFishCatalog.countCardsForMap(mapId)
+end
+
+function M.getOwnedForMap(mapId: string): { [string]: number }
+	return table.clone(getOwnedForMap(mapId))
+end
+
+function M.setOnCloseToMapPicker(callback: () -> ())
+	onCloseToMapPicker = callback
+end
+
+function M.openPanelForMap(mapId: string)
+	if not didInit then
+		M.init()
+	end
+	activeMapId = mapId
+	openedFromMapPicker = true
+	applyTabBarVisible(false)
+	setPanelOpen(true)
+end
+
 function M.openPanel()
 	if not didInit then
 		M.init()
 	end
+	openedFromMapPicker = false
+	applyTabBarVisible(true)
 	setPanelOpen(true)
 end
 
 function M.closePanel()
-	setPanelOpen(false)
+	handleCloseClick()
 end
 
 function M.togglePanel()

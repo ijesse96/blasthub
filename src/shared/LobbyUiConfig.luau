@@ -16,6 +16,8 @@ local LobbyUiConfig = {
 	BACKGROUND_FALLBACK_COLOR = Color3.fromRGB(48, 72, 96),
 
 	HUB_BUTTON_COLUMN_POSITION = UDim2.fromScale(0.5, 0.64),
+	PLAY_BUTTON_POSITION = UDim2.fromScale(0.5, 0.64),
+	COLLECTION_BUTTON_POSITION = UDim2.new(0.5, 0, 0.64, 63),
 	HUB_BUTTON_WIDTH = 320,
 	HUB_BUTTON_GAP = 5,
 	PLAY_BUTTON_HEIGHT = 58,
@@ -24,10 +26,10 @@ local LobbyUiConfig = {
 	BUTTON_INNER_STROKE_COLOR = Color3.new(0, 0, 0),
 	BUTTON_CORNER_RADIUS = 14,
 	HUB_MENU_FONT = Enum.Font.Arcade,
-	-- Temporary: hide secondary menu buttons until features are ready.
-	SHOW_DAILY_BUTTON = false,
+	SHOW_DAILY_BUTTON = true,
 	SHOW_SHOP_BUTTON = false,
-	SHOW_COLLECTION_BUTTON = false,
+	SHOW_COLLECTION_BUTTON = true,
+	SHOW_BATTLE_MODE = true,
 	BUTTON_OUTER_STROKE_THICKNESS = 2.5,
 	BUTTON_INNER_STROKE_THICKNESS = 2,
 
@@ -62,6 +64,11 @@ local LobbyUiConfig = {
 		text = Color3.fromRGB(35, 18, 55),
 		subtitle = nil,
 	} :: HubMenuButtonTheme,
+	COLLECTION_BUTTON_IMAGE = "rbxassetid://101659902255563",
+
+	DISPLAY_ORDER_HUB = 40,
+	DISPLAY_ORDER_CASH_BAR = 50,
+	DISPLAY_ORDER_HUB_OVERLAY = 55,
 
 	Z_BACKGROUND = 0,
 	Z_BUTTONS = 2,
@@ -87,6 +94,8 @@ local LobbyUiConfig = {
 	MAP_TILE_PADDING = 12,
 	MAP_SELECT_OVERLAY_INSET = 48,
 	MAP_SELECT_TITLE = "Choose a map",
+	COLLECTION_SELECT_TITLE = "Choose collection",
+	COLLECTION_MAP_SELECT_EMPTY = "Play a match to start collecting!",
 	MAP_TILE_STROKE = Color3.fromRGB(80, 220, 255),
 	MAP_PLACEHOLDER_COLOR = Color3.fromRGB(32, 42, 56),
 	MAP_SELECT_SCRIM_TRANSPARENCY = 0.35,
@@ -121,6 +130,10 @@ local LobbyUiConfig = {
 	CASH_BAR_PLUS_SIZE = 40,
 	CASH_BAR_PADDING = 10,
 	CASH_BAR_POSITION = UDim2.new(1, -16, 0, 16),
+	-- Small square under the cash bar (top + height + gap).
+	DAILY_BUTTON_SIZE = 44,
+	DAILY_BUTTON_GAP = 8,
+	DAILY_BUTTON_POSITION = UDim2.new(1, -16, 0, 68),
 }
 
 return LobbyUiConfig

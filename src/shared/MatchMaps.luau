@@ -26,7 +26,7 @@ local mapsById: { [string]: MatchMap } = {
 		id = "king_of_the_jungle",
 		displayName = "King of the Jungle",
 		placeId = 0,
-		entryFee = 0,
+		entryFee = 50,
 		firstPlaceBonus = 0,
 		sortOrder = 2,
 		thumbnailImage = "rbxassetid://110244679893761",
@@ -35,7 +35,7 @@ local mapsById: { [string]: MatchMap } = {
 		id = "dragon_quest",
 		displayName = "Dragon Quest",
 		placeId = 0,
-		entryFee = 0,
+		entryFee = 100,
 		firstPlaceBonus = 0,
 		sortOrder = 3,
 		thumbnailImage = "rbxassetid://71683561033302",
@@ -44,7 +44,7 @@ local mapsById: { [string]: MatchMap } = {
 		id = "haunted_mansion",
 		displayName = "Haunted Mansion",
 		placeId = 0,
-		entryFee = 0,
+		entryFee = 150,
 		firstPlaceBonus = 0,
 		sortOrder = 4,
 		thumbnailImage = "rbxassetid://73962958806065",
@@ -53,7 +53,7 @@ local mapsById: { [string]: MatchMap } = {
 		id = "pharaohs_tomb",
 		displayName = "Pharaohs Tomb",
 		placeId = 0,
-		entryFee = 0,
+		entryFee = 200,
 		firstPlaceBonus = 0,
 		sortOrder = 5,
 		thumbnailImage = "rbxassetid://86601530885201",
@@ -62,7 +62,7 @@ local mapsById: { [string]: MatchMap } = {
 		id = "sweet_dreams",
 		displayName = "Sweet Dreams",
 		placeId = 0,
-		entryFee = 0,
+		entryFee = 250,
 		firstPlaceBonus = 0,
 		sortOrder = 6,
 		thumbnailImage = "rbxassetid://125939841856904",
@@ -70,6 +70,8 @@ local mapsById: { [string]: MatchMap } = {
 }
 
 local MatchMaps = {}
+
+MatchMaps.DEFAULT_MAP_ID = "main"
 
 function MatchMaps.getMapById(mapId: string): MatchMap?
 	return mapsById[mapId]

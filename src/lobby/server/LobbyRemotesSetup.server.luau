@@ -10,6 +10,16 @@ local REMOTE_NAMES = {
 	"AtmPurchaseResult",
 	"RequestDailySpin",
 	"DailySpinResult",
+	"JoinBattleQueue",
+	"LeaveBattleQueue",
+	"MatchFound",
+	"BattlePlacementState",
+	"BattlePlacementAction",
+	"BattleSetReady",
+	"BattleResult",
+	"BattleQueueStatus",
+	"BattleCombatUpdate",
+	"BattleSummon",
 }
 
 local folder = ReplicatedStorage:FindFirstChild(REMOTES_NAME)
