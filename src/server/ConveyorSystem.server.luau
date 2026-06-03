@@ -11,6 +11,7 @@ local HIT_FLASH_VFX_REMOTE_NAME = "AntiAirConveyorHitFlashVfx"
 local CASH_FLY_VFX_REMOTE_NAME = "CashFlyVfx"
 local SPLASH_KILL_FISH_VFX_REMOTE_NAME = "SplashKillFishVfx"
 local SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME = "SplashKillFishPreload"
+local MatchSplashConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MatchSplashConfig"))
 local SplashKillFishFrames = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashKillFishFrames"))
 local SplashReelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirSplashReelConfig"))
 local SPLASH_KILL_FISH_IMAGE_ID_ATTRIBUTE = SplashKillFishFrames.IMAGE_ID_ATTRIBUTE
@@ -125,7 +126,7 @@ local FLASH_VIS_MAX_TRANSPARENCY = 0.32
 local HIT_FISH_NET_FOLDER_NAME = "HitFishNet"
 -- Full "rbxassetid://..." or numeric id string; leave nil for procedural beam crosshatch.
 local WATER_SPLASH_NET_TEXTURE_ID: string? = "rbxassetid://135625585340416"
--- Must match WaterSplashSpawner.server.luau
+-- Must match WaterSplashSpawner / JungleSplashTargetSpawner hit attributes.
 local IS_WATER_SPLASH_ATTRIBUTE = "IsWaterSplash"
 local SPLASH_HIT_COLLIDER_NAME = "SplashHitCollider"
 local WATER_SPLASHES_FOLDER_NAME = "WaterSplashes"
@@ -801,7 +802,7 @@ local function getModelBoundingBoxForNetVfx(model: Model): (boolean, CFrame, Vec
 end
 
 local function resolveNetTextureId(): string?
-	local id = WATER_SPLASH_NET_TEXTURE_ID
+	local id = MatchSplashConfig.getForActiveMap().hitNetTextureId or WATER_SPLASH_NET_TEXTURE_ID
 	if not id or id == "" then
 		return nil
 	end
@@ -809,6 +810,17 @@ local function resolveNetTextureId(): string?
 		return id
 	end
 	return "rbxassetid://" .. id
+end
+
+local function modelHasVisibleHitFlashParts(model: Model): boolean
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") and descendant.Name ~= SPLASH_HIT_COLLIDER_NAME then
+			if descendant.Transparency < 0.95 then
+				return true
+			end
+		end
+	end
+	return false
 end
 
 local function attachSplashFishNetHitFx(model: Model)
@@ -862,8 +874,15 @@ local function attachSplashFishNetHitFx(model: Model)
 		anchorWeld.Part1 = primary
 		anchorWeld.Parent = anchor
 
-		local spread = math.max(size.X, size.Y, size.Z)
-		local px = math.clamp(math.floor(spread * 10), 120, 380)
+		local visual = MatchSplashConfig.getForActiveMap()
+		local px: number
+		local overridePx = visual.hitNetBillboardPx
+		if typeof(overridePx) == "number" and overridePx > 0 then
+			px = math.clamp(math.floor(overridePx), 80, 380)
+		else
+			local spread = math.max(size.X, size.Y, size.Z)
+			px = math.clamp(math.floor(spread * 10), 120, 380)
+		end
 
 		local bb = Instance.new("BillboardGui")
 		bb.Name = "HitFishNetBillboard"
@@ -943,16 +962,21 @@ local function flashModelRed(model: Model, persistFishNet: boolean?)
 	local originalFaceColors: { [Instance]: Color3 } = {}
 	local originalVfxColorSeq: { [Instance]: ColorSequence } = {}
 
+	local useHighlight = modelHasVisibleHitFlashParts(model)
+
 	for _, descendant in model:GetDescendants() do
 		if descendant:IsA("BasePart") then
 			if descendant.Name == SPLASH_HIT_COLLIDER_NAME then
+				continue
+			end
+			if descendant.Transparency >= 0.95 then
 				continue
 			end
 			originalColors[descendant] = descendant.Color
 			originalTransparency[descendant] = descendant.Transparency
 			descendant.Color = Color3.fromRGB(255, 110, 110)
 			descendant.Transparency = math.min(descendant.Transparency, FLASH_VIS_MAX_TRANSPARENCY)
-		elseif descendant:IsA("Decal") or descendant:IsA("Texture") then
+		elseif useHighlight and (descendant:IsA("Decal") or descendant:IsA("Texture")) then
 			originalFaceColors[descendant] = descendant.Color3
 			descendant.Color3 = Color3.fromRGB(255, 110, 110)
 		elseif descendant:IsA("ParticleEmitter") or descendant:IsA("Beam") or descendant:IsA("Trail") then
@@ -961,16 +985,20 @@ local function flashModelRed(model: Model, persistFishNet: boolean?)
 		end
 	end
 
-	local highlight = Instance.new("Highlight")
-	highlight.Name = "HitFlash"
-	highlight.Adornee = model
-	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	highlight.FillColor = Color3.fromRGB(255, 110, 110)
-	highlight.OutlineColor = Color3.fromRGB(255, 170, 170)
-	highlight.FillTransparency = 0.25
-	highlight.OutlineTransparency = 0.1
-	highlight.Enabled = true
-	highlight.Parent = model
+	local highlight: Highlight? = nil
+	if useHighlight then
+		local h = Instance.new("Highlight")
+		h.Name = "HitFlash"
+		h.Adornee = model
+		h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		h.FillColor = Color3.fromRGB(255, 110, 110)
+		h.OutlineColor = Color3.fromRGB(255, 170, 170)
+		h.FillTransparency = 0.25
+		h.OutlineTransparency = 0.1
+		h.Enabled = true
+		h.Parent = model
+		highlight = h
+	end
 
 	attachSplashFishNetHitFx(model)
 
@@ -989,7 +1017,9 @@ local function flashModelRed(model: Model, persistFishNet: boolean?)
 	task.spawn(function()
 		task.wait(FLASH_ON_TIME)
 
-		highlight:Destroy()
+		if highlight then
+			highlight:Destroy()
+		end
 		for part, originalColor in originalColors do
 			if part and part.Parent then
 				part.Color = originalColor
@@ -1045,10 +1075,11 @@ local function applyRandomHitDamage(
 		humanoid.Health = math.clamp(newHealth, 0, humanoid.MaxHealth)
 	end
 
+	local isWaterSplash = model:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) == true
+
 	if newHealth <= 0 then
 		local payoutAttr = model:GetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE)
 		local payout = if typeof(payoutAttr) == "number" then payoutAttr else 0
-		local isWaterSplash = model:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) == true
 
 		if isWaterSplash and rewardPlayer and rewardPlayer.Parent then
 			assignAndPrepareSplashKillFishVfx(model, rewardPlayer)

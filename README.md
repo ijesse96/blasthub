@@ -17,8 +17,108 @@ rojo serve
 ## Roblox Studio (live sync)
 
 1. Install the **Rojo** plugin from the [Roblox Creator Store](https://create.roblox.com/store/models) (search “Rojo”).
-2. In this folder, run `rojo serve`.
-3. In Studio, use the Rojo plugin’s **Connect** action (default URL is `localhost:34872`).
-4. Use **Sync In** (or **Play** with sync as you prefer) so scripts from `src/` match the place.
+2. Run the Rojo server for the place you are editing (see table below).
+3. In Studio, open that place, connect the plugin to the matching **host:port**, then **Sync In**.
+
+Fish Frenzy and King of the Jungle use **separate Rojo projects and ports**. Do not connect the wrong port to a place.
+
+| Place | Place ID | Command | Port |
+|-------|----------|---------|------|
+| **Fish Frenzy** | `130112747036452` | `rojo serve default.project.json` | **34873** |
+| **King of the Jungle** | `82834864756259` | `rojo serve king_of_the_jungle.project.json` | **34875** |
+| **Dragon Quest** | `130967805909090` | `rojo serve dragon_quest.project.json` | **34876** |
+| Lobby | `80900269298159` | `rojo serve lobby.project.json` | (see `lobby.project.json`) |
+
+## Arena map layout
+
+Arena places (Fish Frenzy, King of the Jungle, future maps) share gameplay code but keep map-specific surface code separate.
+
+| Path | Scope | Examples |
+|------|--------|----------|
+| `src/shared` | All places | `MatchMaps`, `SplashFishCatalog`, `FishCollectionService` |
+| `src/server` | Arena gameplay (shared) | Anti-air, conveyor, cash, match round |
+| `src/arena/client` | Arena UI (shared) | Cash HUD, cash fly VFX, match round HUD |
+| `src/places/<map_id>/client` | Per-map client | `SplashKillFishVfx.client.luau` |
+| `src/places/<map_id>/server` | Per-map server | `WaterSplashSpawner.server.luau`, `JungleSplashTargetSpawner.server.luau` |
+| `<map_id>.project.json` (repo root) | Rojo sync tree | Workspace floor, `ActiveMapId`, port |
+
+Each Rojo project mounts:
+
+- `ArenaClient` → `src/arena/client`
+- `PlaceClient` → `src/places/<map_id>/client`
+- `Server` → `src/server` (plus optional `PlaceServer` for map-only scripts)
+
+**Fish Frenzy** (`default.project.json`): `WaterSplashSpawner`, wave+sand kill VFX, Fish Frenzy map/floor.
+
+**King of the Jungle** (`king_of_the_jungle.project.json`): `JungleSplashTargetSpawner`, sand-only kill VFX, jungle floor, `ActiveMapId = king_of_the_jungle`. `KillLegacyWaterSplash` removes stale Fish Frenzy spawner scripts if present.
+
+After a King sync on **34875**, Play output should include `[JungleSplashTargetSpawner] v6 loaded PlaceId=82834864756259`.
+
+## Adding a new arena map
+
+### Rojo live sync (macOS)
+
+Put every arena project at the **repo root** as `<map_id>.project.json` with paths like `"src/shared"`.
+Do **not** put projects under `maps/` with `"../src/..."` paths — on macOS with Rojo 7.5.1, only JSON edits sync; `.luau` changes require restarting Rojo ([issue #1200](https://github.com/rojo-rbx/rojo/issues/1200)).
+
+### Two templates, two roles
+
+| What | Copy from | Why |
+|------|-----------|-----|
+| Rojo project file | `king_of_the_jungle.project.json` | Has `ActiveMapId`, correct root-level `src/...` mounts |
+| Place scripts | `src/places/fish_frenzy/` | Fish Frenzy water_template baseline (spawner + wave/sand VFX) |
+
+New maps: folder id = Lua map id = `ActiveMapId` (unlike Fish Frenzy where folder is `fish_frenzy` but id is `main`).
+
+### Upcoming collect maps (lobby placeholders)
+
+These already appear in the lobby **Choose a map** grid via `MatchMaps.luau`. Set a real `placeId` to enable join.
+
+| Map id | Display name | Port | Lobby status |
+|--------|--------------|------|--------------|
+| `dragon_quest` | Dragon Quest | 34876 | live (`130967805909090`) |
+| `haunted_mansion` | Haunted Mansion | 34877 | placeholder |
+| `pharaohs_tomb` | Pharaohs Tomb | 34878 | placeholder |
+| `sweet_dreams` | Sweet Dreams | 34879 | placeholder |
+| *(5th TBD)* | — | 34880 | add to `MatchMaps` if needed |
+
+### Checklist (repeat per map)
+
+**Roblox / Rojo**
+
+1. Create a Roblox place in the same universe; note `placeId`.
+2. Copy `king_of_the_jungle.project.json` → `<map_id>.project.json` at repo root.
+   - Set `placeId`, `servePlaceIds`, and a unique `servePort` (see table above).
+   - Set `ActiveMapId` StringValue to `<map_id>`.
+   - Point `PlaceServer` / `PlaceClient` at `src/places/<map_id>/`.
+   - Customize workspace floor texture, optional `Map.rbxm`, lighting.
+3. Run `rojo serve <map_id>.project.json` and connect Studio to that port only.
+
+**Per-map code** (copy from `fish_frenzy`, not jungle)
+
+4. Copy `src/places/fish_frenzy/` → `src/places/<map_id>/`.
+5. In `server/WaterSplashSpawner.server.luau`: update PlaceId guard, replace `"main"` with `<map_id>`, update log prefix.
+6. In `client/SplashKillFishVfx.client.luau`: customize reveal animation and asset ids.
+7. Do not include jungle-only scripts (`KillLegacyWaterSplash`, `SplashReelLeafBurst`).
+
+**Shared registries** (3 small edits — no lobby UI changes)
+
+8. `src/shared/MatchMaps.luau` — set real `placeId` on the placeholder entry.
+9. `src/shared/MatchSplashConfig.luau` — add `byMapId` entry (`mode = "water_template"`, per-map textures).
+10. `src/shared/SplashFishCatalog.luau` — add tier tables for `<map_id>`.
+
+**Studio workspace**
+
+11. Ensure `Workspace.Water` template exists (water_template mode).
+12. Keep shared mounts: Anti Air, BulletArenaBoundaries.
+13. Do not paste a whole Fish Frenzy place — Rojo mounts scripts; stale pasted spawners cause double-spawn bugs.
+
+**Verify**
+
+- Play output shows spawner log with correct `PlaceId`.
+- Splashes spawn, kill VFX plays, fish collection uses the new map id.
+- Lobby tile joins and teleports to the new place (sync lobby via `rojo serve lobby.project.json`).
+
+Do **not** copy `src/server` or `src/arena/client` unless core gameplay differs.
 
 For more help, check out [the Rojo documentation](https://rojo.space/docs).

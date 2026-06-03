@@ -6,6 +6,7 @@ local shared = ReplicatedStorage:WaitForChild("Shared")
 local EconomyStore = require(shared:WaitForChild("EconomyStore"))
 local Money = require(shared:WaitForChild("Money"))
 local MatchMaps = require(shared:WaitForChild("MatchMaps"))
+local PlaceIds = require(shared:WaitForChild("PlaceIds"))
 
 local REMOTES_NAME = "LobbyRemotes"
 local REQUEST_LEGACY_NAME = "RequestTeleportToMain"
@@ -109,6 +110,36 @@ function M.attemptJoinMap(player: Player, mapId: string, requestSource: string?)
 	end
 end
 
+function M.attemptTeleportToBattleGrounds(player: Player)
+	if not player or not player:IsDescendantOf(Players) then
+		return
+	end
+	if not canRequestNow(player) then
+		return
+	end
+
+	local placeId = PlaceIds.BattleGrounds
+	if placeId == 0 then
+		warn("[Lobby] PlaceIds.BattleGrounds is 0")
+		fireJoinResult(player, false, "V.2 battle unavailable.")
+		return
+	end
+
+	local options = Instance.new("TeleportOptions")
+	options:SetTeleportData({
+		kind = "battlegrounds_v2",
+		source = "lobby_battle_menu",
+	})
+
+	local ok, err = pcall(function()
+		TeleportService:TeleportAsync(placeId, { player }, options)
+	end)
+	if not ok then
+		warn(string.format("[Lobby] Battle Grounds teleport failed for %s: %s", player.Name, tostring(err)))
+		fireJoinResult(player, false, "Teleport failed. Try again.")
+	end
+end
+
 function M.bindRequestRemotes()
 	if didBind then
 		return
@@ -124,6 +155,10 @@ function M.bindRequestRemotes()
 	joinMapRemote.OnServerEvent:Connect(function(player: Player, mapId: unknown)
 		local requestedMapId = if typeof(mapId) == "string" and mapId ~= "" then mapId else "main"
 		M.attemptJoinMap(player, requestedMapId, "join_map_remote")
+	end)
+
+	ensureRemoteEvent("RequestTeleportToBattleGrounds").OnServerEvent:Connect(function(player: Player)
+		M.attemptTeleportToBattleGrounds(player)
 	end)
 
 	Players.PlayerRemoving:Connect(function(player: Player)

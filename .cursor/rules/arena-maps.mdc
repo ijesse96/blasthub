@@ -1,0 +1,43 @@
+---
+description: How to add a new BlastHub collect arena map (Rojo, per-map folders, lobby registration)
+globs: "*.project.json,src/places/**,src/shared/MatchMaps.luau,src/shared/MatchSplashConfig.luau,src/shared/SplashFishCatalog.luau"
+alwaysApply: false
+---
+
+# Arena map scaffolding
+
+## Rojo (macOS live sync)
+
+Arena `.project.json` files **must live at repo root** with `"$path": "src/..."` only.
+Never use `maps/<id>.project.json` with `"../src/..."` — Rojo 7.5.1 on macOS will not sync `.luau` edits (only JSON changes reload). See [rojo#1200](https://github.com/rojo-rbx/rojo/issues/1200).
+
+## Naming
+
+Folder id = Lua map id = `ActiveMapId` StringValue. Exception: Fish Frenzy folder is `fish_frenzy` but map id is `main`.
+
+## Two templates
+
+- **Rojo tree:** copy `king_of_the_jungle.project.json` (ActiveMapId, mount pattern)
+- **Gameplay scripts:** copy `src/places/fish_frenzy/` (water_template baseline)
+
+## Per-map checklist
+
+1. `<map_id>.project.json` at root — unique `servePort`, `placeId`, `ActiveMapId`, paths to `src/places/<map_id>/`
+2. `src/places/<map_id>/server/WaterSplashSpawner.server.luau` — PlaceId guard, map id strings
+3. `src/places/<map_id>/client/SplashKillFishVfx.client.luau` — per-map VFX
+4. `src/shared/MatchMaps.luau` — set real `placeId` (lobby grid is data-driven, no lobby UI edits)
+5. `src/shared/MatchSplashConfig.luau` — `byMapId` entry
+6. `src/shared/SplashFishCatalog.luau` — fish tier tables
+
+## Do not copy per map
+
+`src/server`, `src/arena/client`, bulk of `src/shared`.
+
+## Ports
+
+34872 lobby · 34873 Fish Frenzy · 34874 battlegrounds · 34875 jungle · **34876–34880 next maps**
+
+## Place scripts
+
+Always guard: `if game.PlaceId ~= EXPECTED_PLACE_ID then return end`.
+Always set `ActiveMapId` in project JSON (`SplashKillFishFrames` reads StringValue, not PlaceId).

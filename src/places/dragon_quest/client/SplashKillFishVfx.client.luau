@@ -6,7 +6,10 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local RewardUiColors = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RewardUiColors"))
-local CashFlyVfxUtil = require(script.Parent:WaitForChild("CashFlyVfxUtil"))
+
+local player = Players.LocalPlayer
+local playerScripts = player:WaitForChild("PlayerScripts")
+local CashFlyVfxUtil = require(playerScripts:WaitForChild("ArenaClient"):WaitForChild("CashFlyVfxUtil"))
 local SplashFishCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashFishCatalog"))
 local SplashKillFishFrames = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashKillFishFrames"))
 
@@ -81,7 +84,6 @@ local PANEL_CORNER_RADIUS = UDim.new(0, 6)
 -- Built at center during reel (gui disabled); revealed after retract.
 local CENTER_ROOT_POSITION = UDim2.fromScale(0.5, 0.5)
 
-local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 type PendingCatch = {

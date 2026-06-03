@@ -11,6 +11,7 @@ local REMOTE_NAMES = {
 	"RequestDailySpin",
 	"DailySpinResult",
 	"JoinBattleQueue",
+	"AttackCastle",
 	"LeaveBattleQueue",
 	"MatchFound",
 	"BattlePlacementState",
@@ -20,6 +21,7 @@ local REMOTE_NAMES = {
 	"BattleQueueStatus",
 	"BattleCombatUpdate",
 	"BattleSummon",
+	"RequestTeleportToBattleGrounds",
 }
 
 local folder = ReplicatedStorage:FindFirstChild(REMOTES_NAME)

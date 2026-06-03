@@ -297,7 +297,7 @@ local function buildMapTabs(mapTabBar: Frame)
 	end
 	table.clear(mapTabsById)
 
-	local maps = MatchMaps.getAll()
+	local maps = MatchMaps.getCollectionEnabledMaps()
 	table.sort(maps, function(a, b)
 		return a.displayName < b.displayName
 	end)

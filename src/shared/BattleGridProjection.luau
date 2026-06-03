@@ -32,6 +32,10 @@ function M.cellZIndex(baseZ: number, col: number, row: number, cols: number?): n
 	return baseZ + M.cellDepth(col, row, cols)
 end
 
+function M.maxCellZIndex(baseZ: number, cols: number, rows: number): number
+	return baseZ + cols * rows - 1
+end
+
 local function lerp(a: number, b: number, t: number): number
 	return a + (b - a) * t
 end

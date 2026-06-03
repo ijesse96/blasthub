@@ -58,4 +58,34 @@ function M.canDealBaseDamage(col: number, row: number, attackerSide: BattleSide)
 	return M.cellInSide(col, row, victim)
 end
 
+function M.deploymentCellsForSide(side: BattleSide): { { col: number, row: number } }
+	local cells: { { col: number, row: number } } = {}
+	if side == "A" then
+		for row = BattleGridConfig.SIDE_A_MIN_ROW, BattleGridConfig.ROWS - 1 do
+			for col = 0, BattleGridConfig.COLS - 1 do
+				if M.cellInSide(col, row, side) then
+					table.insert(cells, { col = col, row = row })
+				end
+			end
+		end
+	else
+		for row = BattleGridConfig.SIDE_B_MAX_ROW, 0, -1 do
+			for col = 0, BattleGridConfig.COLS - 1 do
+				if M.cellInSide(col, row, side) then
+					table.insert(cells, { col = col, row = row })
+				end
+			end
+		end
+	end
+	return cells
+end
+
+function M.countCellsForSide(side: BattleSide): number
+	return #M.deploymentCellsForSide(side)
+end
+
+function M.maxUnitsForSide(side: BattleSide): number
+	return M.countCellsForSide(side)
+end
+
 return M

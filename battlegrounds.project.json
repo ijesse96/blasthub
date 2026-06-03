@@ -1,0 +1,48 @@
+{
+  "name": "BlastHubBattleGrounds",
+  "placeId": 95970165088118,
+  "servePlaceIds": [95970165088118],
+  "servePort": 34874,
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": {
+        "$path": "src/shared"
+      }
+    },
+    "ServerScriptService": {
+      "BattleGroundsServer": {
+        "$path": "src/battlegrounds/server"
+      },
+      "BattleGroundsShared": {
+        "$path": "src/battlegrounds/shared"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "BattleGroundsClient": {
+          "$path": "src/battlegrounds/client"
+        }
+      }
+    },
+    "Workspace": {
+      "$properties": {
+        "FilteringEnabled": true
+      }
+    },
+    "Lighting": {
+      "$properties": {
+        "Ambient": [0, 0, 0],
+        "Brightness": 2,
+        "GlobalShadows": true,
+        "Outlines": false,
+        "Technology": "Voxel"
+      }
+    },
+    "SoundService": {
+      "$properties": {
+        "RespectFilteringEnabled": true
+      }
+    }
+  }
+}

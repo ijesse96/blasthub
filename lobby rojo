@@ -1,2 +1,13 @@
-rojo serve lobby.project.json
-rojo serve default.project.json
+# Rojo serve commands (one terminal per place)
+rojo serve default.project.json          # Fish Frenzy — 34873
+rojo serve lobby.project.json            # Lobby — 34872
+rojo serve battlegrounds.project.json    # Battlegrounds — 34874
+rojo serve king_of_the_jungle.project.json  # King of the Jungle — 34875
+
+rojo serve dragon_quest.project.json      # Dragon Quest — 34876
+
+# Reserved ports for upcoming collect maps (repo-root .project.json only)
+# rojo serve haunted_mansion.project.json   # 34877
+# rojo serve pharaohs_tomb.project.json     # 34878
+# rojo serve sweet_dreams.project.json      # 34879
+# rojo serve <5th_map>.project.json         # 34880

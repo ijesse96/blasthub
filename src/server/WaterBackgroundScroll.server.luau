@@ -1,5 +1,8 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+
+local MatchSplashConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MatchSplashConfig"))
 
 local BASEPLATE_NAME = "Baseplate"
 local TEXTURE_NAME = "WaterBackground"
@@ -16,6 +19,10 @@ end
 local texture = baseplate:WaitForChild(TEXTURE_NAME, 30)
 if not texture or not texture:IsA("Texture") then
 	warn("[WaterBackgroundScroll] Expected Texture named " .. TEXTURE_NAME .. " under Baseplate; skipping.")
+	return
+end
+
+if not MatchSplashConfig.getForActiveMap().scrollWaterBackground then
 	return
 end
 

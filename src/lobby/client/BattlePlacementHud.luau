@@ -43,6 +43,9 @@ local leftPanel: Frame
 local centerPanel: Frame
 local rightPanel: Frame
 local footerBar: Frame
+local collectionPanelStroke: UIStroke
+local enemyPanelStroke: UIStroke
+local battleModeLabel: TextLabel
 local timerLabel: TextLabel
 local baseHpLabel: TextLabel
 local manaLabel: TextLabel
@@ -51,6 +54,7 @@ local enemyPlacedLabel: TextLabel
 local readyButton: TextButton
 local collectionScroll: ScrollingFrame
 local enemyScroll: ScrollingFrame
+local collectionTitleLabel: TextLabel
 local collectionEmptyLabel: TextLabel
 local gridHost: Frame
 local combatOverlay: Frame
@@ -77,8 +81,73 @@ local currentLayoutMetrics: BattleGridProjection.LayoutMetrics = BattleGridProje
 	BattleGridConfig.ROWS
 )
 
+local savedLobbyHubEnabled: boolean? = nil
+
+local function setLobbyHubHidden(hidden: boolean)
+	local hubGui = playerGui:FindFirstChild("LobbyHub") :: ScreenGui?
+	if not hubGui then
+		return
+	end
+	if hidden then
+		if savedLobbyHubEnabled == nil then
+			savedLobbyHubEnabled = hubGui.Enabled
+		end
+		hubGui.Enabled = false
+		return
+	end
+	if savedLobbyHubEnabled ~= nil then
+		hubGui.Enabled = savedLobbyHubEnabled
+		savedLobbyHubEnabled = nil
+	end
+end
+
+local function isHeaderBarCollapsed(): boolean
+	return not BattleUiConfig.SHOW_BATTLE_MODE_TITLE and not BattleUiConfig.SHOW_PHASE_TIMER_LABEL
+end
+
+local function applyHeaderChromeVisibility()
+	if battleModeLabel then
+		battleModeLabel.Visible = BattleUiConfig.SHOW_BATTLE_MODE_TITLE
+	end
+	if timerLabel then
+		timerLabel.Visible = BattleUiConfig.SHOW_PHASE_TIMER_LABEL
+	end
+	if baseHpLabel then
+		baseHpLabel.Visible = false
+	end
+	if rightPanel then
+		rightPanel.Visible = BattleUiConfig.SHOW_ENEMY_PANEL
+	end
+end
+
+local function tryRestoreLobbyHub()
+	task.defer(function()
+		local results = playerGui:FindFirstChild("BattleResults") :: ScreenGui?
+		if results and results.Enabled then
+			return
+		end
+		if screenGui and screenGui.Enabled then
+			return
+		end
+		setLobbyHubHidden(false)
+	end)
+end
+
 local function cellKey(col: number, row: number): string
 	return tostring(col) .. "_" .. tostring(row)
+end
+
+local function formatPlacementCountLabel(count: number, side: BattleSide): string
+	local maxUnits = BattleGridSides.maxUnitsForSide(side)
+	local text = string.format("UNITS PLACED: %d / %d", count, maxUnits)
+	if BattleGridConfig.AUTO_FILL_PLACEMENT and count > 0 then
+		text ..= "  — tap grid to adjust, then READY"
+	end
+	return text
+end
+
+local function enemySideForLocal(localSide: BattleSide): BattleSide
+	return if localSide == "A" then "B" else "A"
 end
 
 local function getRemote(name: string): RemoteEvent
@@ -125,6 +194,53 @@ local function getCardSize(): (number, number)
 		return BattleUiConfig.CARD_WIDTH_COMPACT, BattleUiConfig.CARD_HEIGHT_COMPACT
 	end
 	return BattleUiConfig.CARD_WIDTH, BattleUiConfig.CARD_HEIGHT
+end
+
+local function applyCollectionHeaderColor()
+	if not collectionTitleLabel then
+		return
+	end
+	local side = if currentState then currentState.localSide else nil
+	if side == "A" then
+		collectionTitleLabel.TextColor3 = Color3.fromRGB(140, 200, 255)
+		collectionTitleLabel.Text = "BLUE TEAM"
+	elseif side == "B" then
+		collectionTitleLabel.TextColor3 = Color3.fromRGB(255, 160, 160)
+		collectionTitleLabel.Text = "RED TEAM"
+	else
+		collectionTitleLabel.TextColor3 = Color3.new(1, 1, 1)
+		collectionTitleLabel.Text = ""
+	end
+end
+
+local function applyPanelOutlineColors()
+	local side = if currentState then currentState.localSide else nil
+	local enemySide: BattleSide? = nil
+	if side == "A" then
+		enemySide = "B"
+	elseif side == "B" then
+		enemySide = "A"
+	end
+
+	if collectionPanelStroke then
+		if side == "A" then
+			collectionPanelStroke.Color = BattleUiConfig.SIDE_A_ACCENT
+		elseif side == "B" then
+			collectionPanelStroke.Color = BattleUiConfig.SIDE_B_ACCENT
+		else
+			collectionPanelStroke.Color = Color3.fromRGB(90, 95, 105)
+		end
+	end
+
+	if enemyPanelStroke then
+		if enemySide == "A" then
+			enemyPanelStroke.Color = BattleUiConfig.SIDE_A_ACCENT
+		elseif enemySide == "B" then
+			enemyPanelStroke.Color = BattleUiConfig.SIDE_B_ACCENT
+		else
+			enemyPanelStroke.Color = Color3.fromRGB(90, 95, 105)
+		end
+	end
 end
 
 local function syncPlacementOnFieldFromState()
@@ -196,6 +312,15 @@ local function renderCollection()
 
 	collectionEmptyLabel.Visible = #ids == 0
 
+	local sideAccent: Color3? = nil
+	if currentState then
+		if currentState.localSide == "A" then
+			sideAccent = BattleUiConfig.SIDE_A_ACCENT
+		elseif currentState.localSide == "B" then
+			sideAccent = BattleUiConfig.SIDE_B_ACCENT
+		end
+	end
+
 	local cardW, cardH = getCardSize()
 	local grid = collectionScroll:FindFirstChildOfClass("UIGridLayout")
 	if not grid then
@@ -220,6 +345,7 @@ local function renderCollection()
 			width = cardW,
 			height = cardH,
 			selected = selectedImageId == imageId,
+			accentStrokeColor = sideAccent,
 			manaCost = manaCost,
 			onClick = function()
 				selectedImageId = if selectedImageId == imageId then nil else imageId
@@ -290,14 +416,14 @@ local function makeEnemyChip(unit: PlacementUnit, cardW: number, cardH: number):
 end
 
 local function renderEnemyPanel()
-	if not enemyScroll or not currentState then
+	if not BattleUiConfig.SHOW_ENEMY_PANEL or not enemyScroll or not currentState then
 		return
 	end
 	clearScrollChildren(enemyScroll)
 
 	local side = currentState.localSide
 	local enemyLayout = if side == "A" then currentState.layoutB else currentState.layoutA
-	enemyPlacedLabel.Text = string.format("UNITS PLACED: %d / %d", #enemyLayout, BattleGridConfig.MAX_UNITS_PER_SIDE)
+	enemyPlacedLabel.Text = formatPlacementCountLabel(#enemyLayout, enemySideForLocal(side))
 
 	local cardW, cardH = getCardSize()
 	local grid = enemyScroll:FindFirstChildOfClass("UIGridLayout")
@@ -337,8 +463,8 @@ local function updateCellVisual(btn: TextButton, col: number, row: number)
 	local isBaseRow = row == BattleGridConfig.SIDE_B_BASE_ROW or row == BattleGridConfig.SIDE_A_BASE_ROW
 	btn.BackgroundColor3 = if isBaseRow
 		then Color3.fromRGB(88, 72, 28)
-		elseif isBlue then Color3.fromRGB(32, 52, 88)
-		else Color3.fromRGB(72, 36, 40)
+		elseif isBlue then BattleUiConfig.SIDE_A_ACCENT
+		else BattleUiConfig.SIDE_B_ACCENT
 	btn.BackgroundTransparency = if isBaseRow then 0.2 else 0.35
 
 	local art = btn:FindFirstChild("UnitArt")
@@ -404,7 +530,7 @@ local function layoutGridCells()
 	local gridH = currentLayoutMetrics.gridH
 	gridHost.AnchorPoint = Vector2.new(0, 0)
 	gridHost.Size = UDim2.fromOffset(gridW, gridH)
-	gridHost.BackgroundTransparency = if BattleGridProjection.isPerspective() then 1 else 0
+	gridHost.BackgroundTransparency = 1
 	local offsetX = math.max(0, math.floor((avail.X - gridW) * 0.5))
 	local offsetY = math.max(0, math.floor((avail.Y - gridH) * 0.5))
 	gridHost.Position = UDim2.fromOffset(offsetX, offsetY)
@@ -422,6 +548,9 @@ local function layoutGridCells()
 			end
 		end
 	end
+	if combatOverlay then
+		combatOverlay.ZIndex = BattleUiConfig.Z_COMBAT
+	end
 end
 
 local function layoutHud()
@@ -431,7 +560,9 @@ local function layoutHud()
 
 	local compact = isCompactViewport()
 	local inset = BattleUiConfig.ROOT_INSET
-	local headerH = if compact then BattleUiConfig.HEADER_HEIGHT_COMPACT else BattleUiConfig.HEADER_HEIGHT
+	local headerH = if isHeaderBarCollapsed()
+		then 0
+		else if compact then BattleUiConfig.HEADER_HEIGHT_COMPACT else BattleUiConfig.HEADER_HEIGHT
 	local footerH = if compact then BattleUiConfig.FOOTER_HEIGHT_COMPACT else BattleUiConfig.FOOTER_HEIGHT
 
 	root.Position = UDim2.fromOffset(inset, inset)
@@ -446,18 +577,25 @@ local function layoutHud()
 
 	-- Scale-based columns: avoids wrong positions when AbsoluteSize is stale on mobile.
 	local sideScale = if compact then 0.24 else BattleUiConfig.SIDE_WIDTH_SCALE
-	local centerScale = math.max(0.32, 1 - sideScale * 2)
+	local showEnemy = BattleUiConfig.SHOW_ENEMY_PANEL
+	local centerScale = if showEnemy then math.max(0.32, 1 - sideScale * 2) else math.max(0.32, 1 - sideScale)
 
-	leftPanel.Size = UDim2.new(sideScale, 0, 1, 0)
-	leftPanel.Position = UDim2.fromScale(0, 0)
 	centerPanel.Size = UDim2.new(centerScale, 0, 1, 0)
-	centerPanel.Position = UDim2.new(sideScale, 0, 0, 0)
-	rightPanel.Size = UDim2.new(sideScale, 0, 1, 0)
-	rightPanel.Position = UDim2.new(1 - sideScale, 0, 0, 0)
+	centerPanel.Position = UDim2.fromScale(0, 0)
+	leftPanel.Size = UDim2.new(sideScale, 0, 1, 0)
+	leftPanel.Position = UDim2.new(1 - sideScale, 0, 0, 0)
+	if showEnemy then
+		rightPanel.Size = UDim2.new(sideScale, 0, 1, 0)
+		rightPanel.Position = UDim2.new(1 - sideScale * 2, 0, 0, 0)
+	end
 
 	local scrollBar = if compact then BattleUiConfig.SCROLL_BAR_THICKNESS_COMPACT else BattleUiConfig.SCROLL_BAR_THICKNESS
 	collectionScroll.ScrollBarThickness = scrollBar
-	enemyScroll.ScrollBarThickness = scrollBar
+	if showEnemy then
+		enemyScroll.ScrollBarThickness = scrollBar
+	end
+
+	applyHeaderChromeVisibility()
 
 	local collectionScrollTop = 32
 	collectionScroll.Position = UDim2.fromOffset(6, collectionScrollTop)
@@ -469,7 +607,9 @@ local function layoutHud()
 	task.defer(layoutGridCells)
 	task.defer(function()
 		renderCollection()
-		renderEnemyPanel()
+		if BattleUiConfig.SHOW_ENEMY_PANEL then
+			renderEnemyPanel()
+		end
 	end)
 end
 
@@ -489,7 +629,9 @@ local function scheduleLayoutUntilReady()
 			if avail.X >= 64 and avail.Y >= 64 then
 				layoutGridCells()
 				renderCollection()
-				renderEnemyPanel()
+				if BattleUiConfig.SHOW_ENEMY_PANEL then
+					renderEnemyPanel()
+				end
 				return
 			end
 			RunService.Heartbeat:Wait()
@@ -536,11 +678,7 @@ local function onCellClick(col: number, row: number)
 		renderCollection()
 		refreshGrid()
 		if placedLabel then
-			placedLabel.Text = string.format(
-				"UNITS PLACED: %d / %d",
-				#newLayout,
-				BattleGridConfig.MAX_UNITS_PER_SIDE
-			)
+			placedLabel.Text = formatPlacementCountLabel(#newLayout, side)
 		end
 		fireAction({ action = "remove", col = col, row = row })
 		return
@@ -564,11 +702,7 @@ local function onCellClick(col: number, row: number)
 		renderCollection()
 		refreshGrid()
 		if placedLabel then
-			placedLabel.Text = string.format(
-				"UNITS PLACED: %d / %d",
-				#newLayout,
-				BattleGridConfig.MAX_UNITS_PER_SIDE
-			)
+			placedLabel.Text = formatPlacementCountLabel(#newLayout, side)
 		end
 		fireAction({
 			action = "place",
@@ -616,25 +750,28 @@ local function buildUi()
 	screenGui.Enabled = false
 	screenGui.Parent = playerGui
 
-	local inputBlocker = LobbyModalInputBlock.create(screenGui, {
+	LobbyModalInputBlock.create(screenGui, {
 		name = "InputBlocker",
 		zIndex = 1,
-		backgroundTransparency = 0.25,
+		backgroundTransparency = 1,
 	})
-	inputBlocker.Active = false
+
+	local backgroundLayer = Instance.new("Frame")
+	backgroundLayer.Name = "BackgroundLayer"
+	backgroundLayer.Size = UDim2.fromScale(1, 1)
+	backgroundLayer.BackgroundColor3 = BattleUiConfig.BACKGROUND_COLOR
+	backgroundLayer.BorderSizePixel = 0
+	backgroundLayer.ZIndex = 1
+	backgroundLayer.Parent = screenGui
 
 	root = Instance.new("Frame")
 	root.Name = "Root"
 	root.Size = UDim2.fromScale(1, 1)
-	root.BackgroundColor3 = Color3.fromRGB(18, 22, 30)
+	root.BackgroundTransparency = 1
 	root.BorderSizePixel = 0
 	root.ZIndex = 2
 	root.Active = false
 	root.Parent = screenGui
-
-	local rootCorner = Instance.new("UICorner")
-	rootCorner.CornerRadius = UDim.new(0, 8)
-	rootCorner.Parent = root
 
 	headerBar = Instance.new("Frame")
 	headerBar.Name = "Header"
@@ -644,16 +781,17 @@ local function buildUi()
 	headerBar.ZIndex = BattleUiConfig.Z_HEADER
 	headerBar.Parent = root
 
-	local header = Instance.new("TextLabel")
-	header.Size = UDim2.new(0.5, 0, 1, 0)
-	header.BackgroundTransparency = 1
-	header.Font = Enum.Font.GothamBold
-	header.TextSize = 22
-	header.TextXAlignment = Enum.TextXAlignment.Left
-	header.TextColor3 = Color3.new(1, 1, 1)
-	header.Text = "  BATTLE MODE"
-	header.ZIndex = BattleUiConfig.Z_HEADER + 1
-	header.Parent = headerBar
+	battleModeLabel = Instance.new("TextLabel")
+	battleModeLabel.Name = "BattleMode"
+	battleModeLabel.Size = UDim2.new(0.5, 0, 1, 0)
+	battleModeLabel.BackgroundTransparency = 1
+	battleModeLabel.Font = Enum.Font.GothamBold
+	battleModeLabel.TextSize = 22
+	battleModeLabel.TextXAlignment = Enum.TextXAlignment.Left
+	battleModeLabel.TextColor3 = Color3.new(1, 1, 1)
+	battleModeLabel.Text = "  BATTLE MODE"
+	battleModeLabel.ZIndex = BattleUiConfig.Z_HEADER + 1
+	battleModeLabel.Parent = headerBar
 
 	timerLabel = Instance.new("TextLabel")
 	timerLabel.Name = "Timer"
@@ -692,7 +830,7 @@ local function buildUi()
 
 	leftPanel = Instance.new("Frame")
 	leftPanel.Name = "Collection"
-	leftPanel.BackgroundColor3 = Color3.fromRGB(28, 34, 44)
+	leftPanel.BackgroundTransparency = 1
 	leftPanel.BorderSizePixel = 0
 	leftPanel.ClipsDescendants = true
 	leftPanel.Active = false
@@ -703,15 +841,36 @@ local function buildUi()
 	leftCorner.CornerRadius = UDim.new(0, 6)
 	leftCorner.Parent = leftPanel
 
-	local leftTitle = Instance.new("TextLabel")
-	leftTitle.Size = UDim2.new(1, 0, 0, 28)
-	leftTitle.BackgroundTransparency = 1
-	leftTitle.Font = Enum.Font.GothamBold
-	leftTitle.TextSize = 12
-	leftTitle.TextColor3 = Color3.new(1, 1, 1)
-	leftTitle.Text = "YOUR COLLECTION"
-	leftTitle.ZIndex = BattleUiConfig.Z_SIDEBAR + 1
-	leftTitle.Parent = leftPanel
+	collectionPanelStroke = Instance.new("UIStroke")
+	collectionPanelStroke.Thickness = 2
+	collectionPanelStroke.Transparency = 0.25
+	collectionPanelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	collectionPanelStroke.Parent = leftPanel
+
+	collectionTitleLabel = Instance.new("TextLabel")
+	collectionTitleLabel.Size = UDim2.new(1, 0, 0, 28)
+	collectionTitleLabel.BackgroundColor3 = Color3.fromRGB(10, 12, 18)
+	collectionTitleLabel.BackgroundTransparency = 0.25
+	collectionTitleLabel.Font = Enum.Font.GothamBold
+	collectionTitleLabel.TextSize = 14
+	collectionTitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+	collectionTitleLabel.TextStrokeTransparency = 0.55
+	collectionTitleLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+	collectionTitleLabel.TextColor3 = Color3.new(1, 1, 1)
+	collectionTitleLabel.Text = ""
+	collectionTitleLabel.ZIndex = BattleUiConfig.Z_SIDEBAR + 1
+	collectionTitleLabel.Parent = leftPanel
+
+	local titleCorner = Instance.new("UICorner")
+	titleCorner.CornerRadius = UDim.new(0, 6)
+	titleCorner.Parent = collectionTitleLabel
+
+	local titlePad = Instance.new("UIPadding")
+	titlePad.PaddingLeft = UDim.new(0, 10)
+	titlePad.Parent = collectionTitleLabel
+
+	applyCollectionHeaderColor()
+	applyPanelOutlineColors()
 
 	collectionScroll = Instance.new("ScrollingFrame")
 	collectionScroll.Name = "Cards"
@@ -753,7 +912,7 @@ local function buildUi()
 	gridHost.Name = "Grid"
 	gridHost.AnchorPoint = Vector2.new(0, 0)
 	gridHost.Position = UDim2.fromOffset(0, 0)
-	gridHost.BackgroundColor3 = Color3.fromRGB(40, 55, 38)
+	gridHost.BackgroundTransparency = 1
 	gridHost.BorderSizePixel = 0
 	gridHost.Active = false
 	gridHost.ZIndex = BattleUiConfig.Z_GRID
@@ -772,12 +931,12 @@ local function buildUi()
 	combatOverlay.BackgroundTransparency = 1
 	combatOverlay.ClipsDescendants = false
 	combatOverlay.Active = false
-	combatOverlay.ZIndex = BattleUiConfig.Z_GRID + 10
+	combatOverlay.ZIndex = BattleUiConfig.Z_COMBAT
 	combatOverlay.Parent = gridHost
 
 	rightPanel = Instance.new("Frame")
 	rightPanel.Name = "Enemy"
-	rightPanel.BackgroundColor3 = Color3.fromRGB(44, 28, 32)
+	rightPanel.BackgroundTransparency = 1
 	rightPanel.BorderSizePixel = 0
 	rightPanel.ClipsDescendants = true
 	rightPanel.Active = false
@@ -787,6 +946,12 @@ local function buildUi()
 	local rightCorner = Instance.new("UICorner")
 	rightCorner.CornerRadius = UDim.new(0, 6)
 	rightCorner.Parent = rightPanel
+
+	enemyPanelStroke = Instance.new("UIStroke")
+	enemyPanelStroke.Thickness = 2
+	enemyPanelStroke.Transparency = 0.25
+	enemyPanelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	enemyPanelStroke.Parent = rightPanel
 
 	local rightTitle = Instance.new("TextLabel")
 	rightTitle.Size = UDim2.new(1, 0, 0, 28)
@@ -807,7 +972,7 @@ local function buildUi()
 	enemyPlacedLabel.TextSize = 11
 	enemyPlacedLabel.TextXAlignment = Enum.TextXAlignment.Left
 	enemyPlacedLabel.TextColor3 = Color3.fromRGB(220, 180, 180)
-	enemyPlacedLabel.Text = "UNITS PLACED: 0 / 10"
+	enemyPlacedLabel.Text = "UNITS PLACED: 0 / 72"
 	enemyPlacedLabel.ZIndex = BattleUiConfig.Z_SIDEBAR + 1
 	enemyPlacedLabel.Parent = rightPanel
 
@@ -825,8 +990,7 @@ local function buildUi()
 
 	footerBar = Instance.new("Frame")
 	footerBar.Name = "Footer"
-	footerBar.BackgroundColor3 = Color3.fromRGB(22, 28, 38)
-	footerBar.BackgroundTransparency = 0.15
+	footerBar.BackgroundTransparency = 1
 	footerBar.BorderSizePixel = 0
 	footerBar.Active = false
 	footerBar.ZIndex = BattleUiConfig.Z_FOOTER
@@ -841,7 +1005,7 @@ local function buildUi()
 	placedLabel.TextSize = 13
 	placedLabel.TextXAlignment = Enum.TextXAlignment.Left
 	placedLabel.TextColor3 = Color3.fromRGB(180, 200, 255)
-	placedLabel.Text = "UNITS PLACED: 0 / 10"
+	placedLabel.Text = "UNITS PLACED: 0 / 72"
 	placedLabel.ZIndex = BattleUiConfig.Z_FOOTER + 1
 	placedLabel.Parent = footerBar
 
@@ -885,13 +1049,15 @@ local function buildUi()
 	if camera then
 		viewportConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(layoutHud)
 	end
+
+	applyHeaderChromeVisibility()
 end
 
 local function updateCombatStats()
+	if baseHpLabel then
+		baseHpLabel.Visible = false
+	end
 	if not currentState or currentState.phase ~= "combat" then
-		if baseHpLabel then
-			baseHpLabel.Visible = false
-		end
 		if manaLabel then
 			manaLabel.Visible = false
 		end
@@ -903,12 +1069,21 @@ local function updateCombatStats()
 	local side = currentState.localSide
 	local myHp = if side == "A" then hpA else hpB
 	local theirHp = if side == "A" then hpB else hpA
-	baseHpLabel.Visible = true
-	baseHpLabel.Text = string.format("BASE  You:%d  Enemy:%d  /%d", math.floor(myHp), math.floor(theirHp), maxBase)
+	local baseHpText = string.format("BASE  You:%d  Enemy:%d  /%d", math.floor(myHp), math.floor(theirHp), maxBase)
+	if placedLabel then
+		placedLabel.Visible = true
+		placedLabel.AnchorPoint = Vector2.new(0, 0)
+		placedLabel.Position = UDim2.fromOffset(12, 6)
+		placedLabel.Size = UDim2.new(0.55, 0, 0, 18)
+		placedLabel.Text = baseHpText
+	end
 
 	local maxMana = currentState.maxMana or BattleGridConfig.MAX_MANA
 	local myMana = if side == "A" then (currentState.manaA or 0) else (currentState.manaB or 0)
 	manaLabel.Visible = true
+	manaLabel.AnchorPoint = Vector2.new(0, 0)
+	manaLabel.Position = UDim2.fromOffset(12, 26)
+	manaLabel.Size = UDim2.new(0.9, 0, 0, 18)
 	manaLabel.Text = string.format("MANA: %.1f / %d  — tap fish, then grid to summon", myMana, maxMana)
 end
 
@@ -916,13 +1091,16 @@ local function updateHud()
 	if not currentState then
 		return
 	end
+	applyCollectionHeaderColor()
+	applyPanelOutlineColors()
 	local side = currentState.localSide
 	local myLayout = if side == "A" then currentState.layoutA else currentState.layoutB
 	local myInfo = if side == "A" then currentState.playerA else currentState.playerB
 
 	if currentState.phase == "combat" then
-		timerLabel.Text = "BATTLE — push fish to enemy side!"
-		placedLabel.Visible = false
+		if BattleUiConfig.SHOW_PHASE_TIMER_LABEL and timerLabel then
+			timerLabel.Text = "BATTLE — push fish to enemy side!"
+		end
 		readyButton.Visible = false
 		updateCombatStats()
 		refreshGrid()
@@ -932,25 +1110,37 @@ local function updateHud()
 
 	placedLabel.Visible = true
 	readyButton.Visible = true
-	placedLabel.Text = string.format("UNITS PLACED: %d / %d", #myLayout, BattleGridConfig.MAX_UNITS_PER_SIDE)
+	placedLabel.AnchorPoint = Vector2.new(0, 0.5)
+	placedLabel.Position = UDim2.new(0, 12, 0.5, 0)
+	placedLabel.Size = UDim2.new(0.45, 0, 1, 0)
+	placedLabel.Text = formatPlacementCountLabel(#myLayout, side)
 
-	if BattleGridConfig.PLACEMENT_TIMER_ENABLED then
-		local remaining = math.max(0, currentState.placementEndServerTime - Workspace:GetServerTimeNow())
-		timerLabel.Text = string.format("PLACEMENT PHASE  %.0fs", remaining)
-	else
-		timerLabel.Text = "PLACEMENT PHASE"
+	if BattleUiConfig.SHOW_PHASE_TIMER_LABEL and timerLabel then
+		if BattleGridConfig.PLACEMENT_TIMER_ENABLED then
+			local remaining = math.max(0, currentState.placementEndServerTime - Workspace:GetServerTimeNow())
+			timerLabel.Text = string.format("PLACEMENT PHASE  %.0fs", remaining)
+		else
+			timerLabel.Text = "PLACEMENT PHASE"
+		end
 	end
 
 	readyButton.Text = if myInfo.ready then "WAITING..." else "READY"
 	readyButton.Active = not myInfo.ready and currentState.phase == "placement"
 	updateCombatStats()
 	refreshGrid()
-	renderEnemyPanel()
+	if BattleUiConfig.SHOW_ENEMY_PANEL then
+		renderEnemyPanel()
+	end
 	renderCollection()
 end
 
 local function updatePlacementTimerOnly()
-	if not currentState or currentState.phase ~= "placement" or not timerLabel then
+	if
+		not BattleUiConfig.SHOW_PHASE_TIMER_LABEL
+		or not currentState
+		or currentState.phase ~= "placement"
+		or not timerLabel
+	then
 		return
 	end
 	if BattleGridConfig.PLACEMENT_TIMER_ENABLED then
@@ -964,7 +1154,7 @@ local function startTimerLoop()
 		timerConnection:Disconnect()
 		timerConnection = nil
 	end
-	if not BattleGridConfig.PLACEMENT_TIMER_ENABLED then
+	if not BattleUiConfig.SHOW_PHASE_TIMER_LABEL or not BattleGridConfig.PLACEMENT_TIMER_ENABLED then
 		return
 	end
 	timerConnection = RunService.Heartbeat:Connect(function()
@@ -1016,9 +1206,12 @@ function M.open(state: BattlePlacementStatePayload)
 	buildUi()
 	clearCombatVisualsFromGrid()
 	currentState = state
+	applyCollectionHeaderColor()
+	applyPanelOutlineColors()
 	syncPlacementOnFieldFromState()
 	seedOwnedFromInventory()
 	screenGui.Enabled = true
+	setLobbyHubHidden(true)
 	LobbyTouchInputSuppress.setHolder("battle-placement", true)
 	LobbyModalInputBlock.setLobbyHubBlocked("battle-placement", true)
 	layoutHud()
@@ -1031,6 +1224,8 @@ end
 function M.update(state: BattlePlacementStatePayload)
 	local wasCombat = currentState ~= nil and currentState.phase == "combat"
 	currentState = state
+	applyCollectionHeaderColor()
+	applyPanelOutlineColors()
 	if wasCombat and state.phase ~= "combat" then
 		M.exitCombatView()
 	end
@@ -1075,6 +1270,10 @@ export type GridLayoutInfo = {
 	combatOverlay: Frame,
 	cellSize: number,
 	pad: number,
+	cellCenterOffset: (number, number) -> (number, number),
+	cellTopLeft: (number, number) -> (number, number),
+	cellSizeAt: (number, number) -> number,
+	cellZIndex: (number, number) -> number,
 }
 
 function M.getGridLayout(): GridLayoutInfo?
@@ -1087,6 +1286,18 @@ function M.getGridLayout(): GridLayoutInfo?
 		combatOverlay = combatOverlay,
 		cellSize = currentCellSize,
 		pad = currentGridPad,
+		cellCenterOffset = function(col: number, row: number): (number, number)
+			return M.cellCenterOffset(col, row)
+		end,
+		cellTopLeft = function(col: number, row: number): (number, number)
+			return M.cellTopLeft(col, row)
+		end,
+		cellSizeAt = function(col: number, row: number): number
+			return M.cellSizeAt(col, row)
+		end,
+		cellZIndex = function(col: number, row: number): number
+			return M.cellZIndex(BattleUiConfig.Z_COMBAT + 1, col, row)
+		end,
 	}
 end
 
@@ -1112,14 +1323,11 @@ end
 
 function M.enterCombatView()
 	hidePlacementArt = true
-	if rightPanel then
+	if rightPanel and BattleUiConfig.SHOW_ENEMY_PANEL then
 		rightPanel.Visible = false
 	end
 	if readyButton then
 		readyButton.Visible = false
-	end
-	if placedLabel then
-		placedLabel.Visible = false
 	end
 	if leftPanel then
 		leftPanel.Visible = true
@@ -1157,7 +1365,7 @@ function M.exitCombatView()
 		leftPanel.Visible = true
 	end
 	if rightPanel then
-		rightPanel.Visible = true
+		rightPanel.Visible = BattleUiConfig.SHOW_ENEMY_PANEL
 	end
 	if readyButton then
 		readyButton.Visible = true
@@ -1175,6 +1383,8 @@ end
 function M.close()
 	layoutRetryToken += 1
 	M.exitCombatView()
+	applyCollectionHeaderColor()
+	applyPanelOutlineColors()
 	if timerConnection then
 		timerConnection:Disconnect()
 		timerConnection = nil
@@ -1184,6 +1394,7 @@ function M.close()
 	end
 	LobbyTouchInputSuppress.setHolder("battle-placement", false)
 	LobbyModalInputBlock.setLobbyHubBlocked("battle-placement", false)
+	tryRestoreLobbyHub()
 	currentState = nil
 	selectedImageId = nil
 	table.clear(combatFieldImageIds)
@@ -1199,6 +1410,10 @@ end
 
 function M.isOpen(): boolean
 	return screenGui ~= nil and screenGui.Enabled
+end
+
+function M.releaseLobbyHubSuppression()
+	setLobbyHubHidden(false)
 end
 
 return M

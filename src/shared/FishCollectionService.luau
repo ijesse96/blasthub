@@ -51,6 +51,44 @@ function FishCollectionService.getCachedSnapshot(userId: number): FishCollection
 	return snapshotCacheByUserId[userId] or {}
 end
 
+local function mergeSnapshots(loaded: FishCollectionSnapshot, cached: FishCollectionSnapshot): FishCollectionSnapshot
+	local merged: FishCollectionSnapshot = {}
+	for mapId, mapOwned in loaded do
+		local copy: { [string]: number } = {}
+		for imageId, count in mapOwned do
+			copy[imageId] = count
+		end
+		merged[mapId] = copy
+	end
+	for mapId, cachedOwned in cached do
+		local mergedMap = merged[mapId]
+		if not mergedMap then
+			mergedMap = {}
+			merged[mapId] = mergedMap
+		end
+		for imageId, count in cachedOwned do
+			if count > (mergedMap[imageId] or 0) then
+				mergedMap[imageId] = count
+			end
+		end
+	end
+	return merged
+end
+
+local function applyGrantToSnapshot(
+	snapshot: FishCollectionSnapshot,
+	mapId: string,
+	imageId: string,
+	newCount: number
+)
+	local mapOwned = snapshot[mapId]
+	if not mapOwned then
+		mapOwned = {}
+		snapshot[mapId] = mapOwned
+	end
+	mapOwned[imageId] = newCount
+end
+
 function FishCollectionService.pushSnapshot(player: Player, snapshot: FishCollectionSnapshot)
 	if not player.Parent then
 		return
@@ -61,7 +99,9 @@ end
 
 function FishCollectionService.loadPlayerCollection(player: Player): FishCollectionSnapshot
 	ensureServer()
-	local snapshot = FishCollectionStore.loadAsync(player.UserId)
+	local loaded = FishCollectionStore.loadAsync(player.UserId)
+	local cached = snapshotCacheByUserId[player.UserId]
+	local snapshot = if cached then mergeSnapshots(loaded, cached) else loaded
 	snapshotCacheByUserId[player.UserId] = snapshot
 	FishCollectionService.pushSnapshot(player, snapshot)
 	return snapshot
@@ -79,21 +119,32 @@ function FishCollectionService.grantFishToPlayer(
 
 	local resolvedMapId = if typeof(mapId) == "string" and mapId ~= "" then mapId else SplashKillFishFrames.getActiveMapId()
 	local ok, newCount, wasFirstDiscovery = FishCollectionStore.grantFishAsync(player.UserId, resolvedMapId, imageId)
-	if not ok then
-		return false, 0, false
-	end
 
 	local snapshot = snapshotCacheByUserId[player.UserId]
 	if not snapshot then
-		snapshot = FishCollectionStore.loadAsync(player.UserId)
-	else
-		local mapOwned = snapshot[resolvedMapId]
-		if not mapOwned then
-			mapOwned = {}
-			snapshot[resolvedMapId] = mapOwned
-		end
-		mapOwned[imageId] = newCount
+		snapshot = {}
+		snapshotCacheByUserId[player.UserId] = snapshot
 	end
+
+	if ok then
+		applyGrantToSnapshot(snapshot, resolvedMapId, imageId, newCount)
+	else
+		local mapOwned = snapshot[resolvedMapId] or {}
+		local oldCount = mapOwned[imageId] or 0
+		newCount = oldCount + 1
+		wasFirstDiscovery = oldCount <= 0
+		applyGrantToSnapshot(snapshot, resolvedMapId, imageId, newCount)
+		if RunService:IsStudio() then
+			warn(
+				string.format(
+					"[FishCollectionService] Memory-only grant for %s on %s (DataStore save failed)",
+					imageId,
+					player.Name
+				)
+			)
+		end
+	end
+
 	snapshotCacheByUserId[player.UserId] = snapshot
 	FishCollectionService.pushSnapshot(player, snapshot)
 

@@ -6,6 +6,7 @@ local shared = ReplicatedStorage:WaitForChild("Shared")
 local BattleLayoutTypes = require(shared:WaitForChild("BattleLayoutTypes"))
 local LobbyUiConfig = require(shared:WaitForChild("LobbyUiConfig"))
 
+local BattlePlacementHud = require(script.Parent:WaitForChild("BattlePlacementHud"))
 local LobbyModalInputBlock = require(script.Parent:WaitForChild("LobbyModalInputBlock"))
 local LobbyTouchInputSuppress = require(script.Parent:WaitForChild("LobbyTouchInputSuppress"))
 
@@ -133,6 +134,7 @@ function M.close()
 	end
 	LobbyTouchInputSuppress.setHolder("battle-results", false)
 	LobbyModalInputBlock.setLobbyHubBlocked("battle-results", false)
+	BattlePlacementHud.releaseLobbyHubSuppression()
 	if onDismiss then
 		onDismiss()
 	end

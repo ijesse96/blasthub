@@ -1,7 +1,12 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local shared = ReplicatedStorage:WaitForChild("Shared")
+local MatchSplashConfig = require(shared:WaitForChild("MatchSplashConfig"))
+
 local ACTIVE_MAP_ID_NAME = "ActiveMapId"
+
+MatchSplashConfig.ensureActiveMapIdOnServer()
 
 -- Optional hook for arrivals from the lobby (or any TeleportService teleport).
 -- `player:GetJoinData().TeleportData` is set from the lobby via TeleportOptions.
@@ -34,6 +39,7 @@ Players.PlayerAdded:Connect(function(player: Player)
 	end
 
 	if kind == "match" and mapId then
+		MatchSplashConfig.ensureActiveMapIdOnServer()
 		local active = ReplicatedStorage:FindFirstChild(ACTIVE_MAP_ID_NAME)
 		if active and active:IsA("StringValue") then
 			active.Value = mapId

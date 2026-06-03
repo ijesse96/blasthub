@@ -6,11 +6,17 @@
 export type PlaceIds = {
 	Lobby: number,
 	MainGame: number,
+	BattleGrounds: number,
+	KingOfTheJungle: number,
+	DragonQuest: number,
 }
 
 local PlaceIds: PlaceIds = {
 	Lobby = 80900269298159,
 	MainGame = 130112747036452,
+	BattleGrounds = 95970165088118,
+	KingOfTheJungle = 82834864756259,
+	DragonQuest = 130967805909090,
 }
 
 return PlaceIds

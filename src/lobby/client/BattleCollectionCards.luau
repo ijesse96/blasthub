@@ -23,6 +23,7 @@ export type BattleCardOptions = {
 	width: number?,
 	height: number?,
 	selected: boolean?,
+	accentStrokeColor: Color3?,
 	manaCost: number?,
 	onClick: (() -> ())?,
 }
@@ -62,8 +63,14 @@ function M.makeCard(options: BattleCardOptions): TextButton
 	corner.Parent = card
 
 	local stroke = Instance.new("UIStroke")
-	stroke.Color = if isSelected then Color3.fromRGB(255, 220, 80) else M.getTierAccent(mapId, imageId)
-	stroke.Thickness = if isSelected then 3 else 1.5
+	if isSelected then
+		stroke.Color = Color3.fromRGB(255, 220, 80)
+	elseif options.accentStrokeColor then
+		stroke.Color = options.accentStrokeColor
+	else
+		stroke.Color = M.getTierAccent(mapId, imageId)
+	end
+	stroke.Thickness = if isSelected then 4 else 3
 	stroke.Parent = card
 
 	if isSelected then

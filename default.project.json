@@ -1,15 +1,21 @@
 {
   "name": "BlastHub",
+  "placeId": 130112747036452,
+  "servePlaceIds": [130112747036452],
+  "servePort": 34873,
   "tree": {
     "$className": "DataModel",
     "ReplicatedStorage": {
       "Shared": {
         "$path": "src/shared"
       },
-      "ActiveMapId": {
-        "$className": "StringValue",
-        "$properties": {
-          "Value": "main"
+      "commonsplashfishframes": {
+        "$className": "Folder",
+        "Atlas": {
+          "$className": "StringValue",
+          "$properties": {
+            "Value": "rbxassetid://138790142443698"
+          }
         }
       }
     },
@@ -19,20 +25,20 @@
       }
     },
     "ServerScriptService": {
+      "PlaceServer": {
+        "$path": "src/places/fish_frenzy/server"
+      },
       "Server": {
         "$path": "src/server"
       }
     },
-    "StarterGui": {
-      "$className": "StarterGui",
-      "$properties": {
-        "ScreenOrientation": "LandscapeSensor"
-      }
-    },
     "StarterPlayer": {
       "StarterPlayerScripts": {
-        "Client": {
-          "$path": "src/client"
+        "ArenaClient": {
+          "$path": "src/arena/client"
+        },
+        "PlaceClient": {
+          "$path": "src/places/fish_frenzy/client"
         }
       }
     },

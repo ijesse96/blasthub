@@ -7,6 +7,7 @@ local BattleLayoutTypes = require(shared:WaitForChild("BattleLayoutTypes"))
 local LobbyUiConfig = require(shared:WaitForChild("LobbyUiConfig"))
 
 local BattleCombatPlayback = require(script.Parent:WaitForChild("BattleCombatPlayback"))
+local BattleMapUi = require(script.Parent:WaitForChild("BattleMapUi"))
 local BattlePlacementHud = require(script.Parent:WaitForChild("BattlePlacementHud"))
 local BattleResults = require(script.Parent:WaitForChild("BattleResults"))
 local LobbyModalInputBlock = require(script.Parent:WaitForChild("LobbyModalInputBlock"))
@@ -23,6 +24,8 @@ local REMOTE_STATE = "BattlePlacementState"
 local REMOTE_RESULT = "BattleResult"
 local REMOTE_COMBAT_UPDATE = "BattleCombatUpdate"
 local REMOTE_QUEUE_STATUS = "BattleQueueStatus"
+local REMOTE_TELEPORT_BATTLE_GROUNDS = "RequestTeleportToBattleGrounds"
+local REMOTE_JOIN_RESULT = "LobbyJoinResult"
 local SNAPSHOT_REMOTE = "FishCollectionSnapshot"
 
 local player = Players.LocalPlayer
@@ -96,7 +99,7 @@ local function ensureQueueUi()
 	panel.Name = "Panel"
 	panel.AnchorPoint = Vector2.new(0.5, 0.5)
 	panel.Position = UDim2.fromScale(0.5, 0.5)
-	panel.Size = UDim2.fromOffset(320, 220)
+	panel.Size = UDim2.fromOffset(320, 320)
 	panel.BackgroundColor3 = Color3.fromRGB(28, 36, 48)
 	panel.BorderSizePixel = 0
 	panel.ZIndex = 2
@@ -129,7 +132,7 @@ local function ensureQueueUi()
 
 	local findBtn = Instance.new("TextButton")
 	findBtn.Name = "FindMatch"
-	findBtn.Position = UDim2.fromOffset(24, 120)
+	findBtn.Position = UDim2.fromOffset(24, 112)
 	findBtn.Size = UDim2.new(1, -48, 0, 40)
 	findBtn.BackgroundColor3 = Color3.fromRGB(55, 120, 220)
 	findBtn.Font = Enum.Font.GothamBold
@@ -143,9 +146,41 @@ local function ensureQueueUi()
 	findCorner.CornerRadius = UDim.new(0, 8)
 	findCorner.Parent = findBtn
 
+	local battleMapBtn = Instance.new("TextButton")
+	battleMapBtn.Name = "BattleMap"
+	battleMapBtn.Position = UDim2.fromOffset(24, 160)
+	battleMapBtn.Size = UDim2.new(1, -48, 0, 40)
+	battleMapBtn.BackgroundColor3 = Color3.fromRGB(72, 140, 90)
+	battleMapBtn.Font = Enum.Font.GothamBold
+	battleMapBtn.TextSize = 18
+	battleMapBtn.TextColor3 = Color3.new(1, 1, 1)
+	battleMapBtn.Text = LobbyUiConfig.BATTLE_MAP_BUTTON_LABEL
+	battleMapBtn.ZIndex = 3
+	battleMapBtn.Parent = panel
+
+	local battleMapCorner = Instance.new("UICorner")
+	battleMapCorner.CornerRadius = UDim.new(0, 8)
+	battleMapCorner.Parent = battleMapBtn
+
+	local v2Btn = Instance.new("TextButton")
+	v2Btn.Name = "BattleGroundsV2"
+	v2Btn.Position = UDim2.fromOffset(24, 208)
+	v2Btn.Size = UDim2.new(1, -48, 0, 40)
+	v2Btn.BackgroundColor3 = Color3.fromRGB(180, 88, 200)
+	v2Btn.Font = Enum.Font.GothamBold
+	v2Btn.TextSize = 18
+	v2Btn.TextColor3 = Color3.new(1, 1, 1)
+	v2Btn.Text = LobbyUiConfig.BATTLE_V2_BUTTON_LABEL
+	v2Btn.ZIndex = 3
+	v2Btn.Parent = panel
+
+	local v2Corner = Instance.new("UICorner")
+	v2Corner.CornerRadius = UDim.new(0, 8)
+	v2Corner.Parent = v2Btn
+
 	local cancelBtn = Instance.new("TextButton")
 	cancelBtn.Name = "Cancel"
-	cancelBtn.Position = UDim2.fromOffset(24, 168)
+	cancelBtn.Position = UDim2.fromOffset(24, 260)
 	cancelBtn.Size = UDim2.new(1, -48, 0, 36)
 	cancelBtn.BackgroundColor3 = Color3.fromRGB(60, 68, 80)
 	cancelBtn.Font = Enum.Font.GothamBold
@@ -161,6 +196,19 @@ local function ensureQueueUi()
 
 	bindPressOnce(findBtn, function()
 		getRemote(REMOTE_JOIN):FireServer()
+	end)
+	bindPressOnce(battleMapBtn, function()
+		BattleMapUi.open()
+	end)
+	bindPressOnce(v2Btn, function()
+		if inQueue then
+			getRemote(REMOTE_LEAVE):FireServer()
+			inQueue = false
+		end
+		if statusLabel then
+			statusLabel.Text = "Teleporting to V.2 battle..."
+		end
+		getRemote(REMOTE_TELEPORT_BATTLE_GROUNDS):FireServer()
 	end)
 	bindPressOnce(cancelBtn, closeQueuePanel)
 end
@@ -211,9 +259,14 @@ local function bindRemotes()
 			return
 		end
 		inQueue = payload.inQueue == true
+		local message = if payload.message then tostring(payload.message) else nil
+		if message and (not queueGui or not queueGui.Enabled) then
+			ensureQueueUi()
+			setQueueUiEnabled(true)
+		end
 		if statusLabel then
-			if payload.message then
-				statusLabel.Text = tostring(payload.message)
+			if message then
+				statusLabel.Text = message
 			elseif inQueue then
 				statusLabel.Text = "Searching for opponent..."
 			else
@@ -276,6 +329,15 @@ local function bindRemotes()
 		showResults(result)
 	end)
 
+	getRemote(REMOTE_JOIN_RESULT).OnClientEvent:Connect(function(payload: any)
+		if typeof(payload) ~= "table" or not queueGui or not queueGui.Enabled then
+			return
+		end
+		if payload.ok == false and payload.message and statusLabel then
+			statusLabel.Text = tostring(payload.message)
+		end
+	end)
+
 	local snap = ReplicatedStorage:FindFirstChild(SNAPSHOT_REMOTE)
 	if snap and snap:IsA("RemoteEvent") then
 		snap.OnClientEvent:Connect(function(snapshot: unknown)
@@ -286,6 +348,9 @@ end
 
 function M.init()
 	bindRemotes()
+	BattleMapUi.setOnClose(function()
+		openQueue()
+	end)
 	BattlePlacementHud.setOnClose(function()
 		inQueue = false
 		liveCombatActive = false

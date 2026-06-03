@@ -1,56 +1,69 @@
 --!strict
+-- Fish Frenzy (130112747036452): billboard PNG splash targets. Synced via default.project.json PlaceServer only.
+
+local FISH_FRENZY_PLACE_ID = 130112747036452
+local LOG_PREFIX = "[WaterSplashSpawner]"
+local SCRIPT_VERSION = 1
+
+print(LOG_PREFIX, "v" .. SCRIPT_VERSION, "loaded PlaceId=" .. tostring(game.PlaceId))
+
+if game.PlaceId ~= FISH_FRENZY_PLACE_ID then
+	return
+end
+
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ServerStorage = game:GetService("ServerStorage")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
-local SplashKillFishFrames = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashKillFishFrames"))
+local BUILD_TAG = "fish-frenzy-water-v4"
+
+local shared = ReplicatedStorage:WaitForChild("Shared")
+local MatchSplashConfig = require(shared:WaitForChild("MatchSplashConfig"))
+local SplashKillFishFrames = require(shared:WaitForChild("SplashKillFishFrames"))
+local SplashSpawnExclusions = require(shared:WaitForChild("SplashSpawnExclusions"))
+local SplashArenaInterior = require(shared:WaitForChild("SplashArenaInterior"))
 
 local SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME = "SplashKillFishPreload"
 
 local WATER_TEMPLATE_NAME = "Water"
+local BILLBOARD_TEMPLATE_NAME = "BillboardSplash"
 local TEMPLATE_HOLDER_NAME = "WaterTemplate"
 local ACTIVE_FOLDER_NAME = "WaterSplashes"
-local BOUNDARY_FOLDER_NAME = "BulletArenaBoundaries"
-
 local MAX_ACTIVE_SPLASHES = 18
 local SPAWN_INTERVAL = 0.35
 local SPAWN_MARGIN = 6
 local MIN_SPACING_STUDS = 10
-local MAX_SPAWN_ATTEMPTS = 6
+local MAX_SPAWN_ATTEMPTS = 12
 
 local SCALE_MIN, SCALE_MAX = 0.7, 1.3
 
 local FADE_IN_SECONDS = 0.3
 local HOLD_SECONDS = 6.0
 local FADE_OUT_SECONDS = 0.8
--- Tiny lift so visuals don't z-fight with Baseplate.WaterBackground texture.
 local Y_OFFSET = 0.02
--- Raise splashes above the baseplate top so mostly-horizontal anti-air raycasts
--- intersect the hit volume instead of skimming the flat floor behind the effect.
 local SPAWN_LIFT_ABOVE_BASEPLATE = 2.5
 
--- Invisible hit collider sits over each splash so bullets reliably register hits
--- regardless of how small/thin the visual splash mesh is.
 local HIT_COLLIDER_RADIUS = 14
--- Wide footprint only; keep Y short so hits feel horizontal, not a tall column.
 local HIT_COLLIDER_HEIGHT = 4
 local HIT_COLLIDER_NAME = "SplashHitCollider"
 
--- Attribute names must match ConveyorSystem so anti-air projectiles recognize splashes.
 local CONVEYOR_ITEM_ATTRIBUTE = "IsConveyorItem"
 local CONVEYOR_HEALTH_ATTRIBUTE = "ConveyorHealth"
 local CONVEYOR_MAX_HEALTH_ATTRIBUTE = "ConveyorMaxHealth"
 local CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE = "ConveyorItemCashReward"
 local CONVEYOR_SCALE_ATTRIBUTE = "ConveyorSpawnScale"
--- ConveyorSystem: splash kill VFX above turret reads this attribute.
 local IS_WATER_SPLASH_ATTRIBUTE = "IsWaterSplash"
 
 local SPLASH_HEALTH_MIN = 1
 local SPLASH_HEALTH_MAX = 3
 local SPLASH_CASH_MIN = 1
 local SPLASH_CASH_MAX = 5
+
+local FISH_BILLBOARD_NAME = "SplashBillboard"
+local DEFAULT_BILLBOARD_STUDS = 14
+local DEFAULT_FISH_BILLBOARD_SCALE = 0.45
 
 local function fireSplashKillFishPreloadToAll(imageId: string)
 	local remote = ReplicatedStorage:FindFirstChild(SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME)
@@ -62,87 +75,12 @@ local function fireSplashKillFishPreloadToAll(imageId: string)
 	end
 end
 
-type ArenaBounds = {
-	minX: number,
-	maxX: number,
-	minZ: number,
-	maxZ: number,
-	floorY: number,
-	widthX: number,
-	depthZ: number,
-}
+type ArenaBounds = SplashArenaInterior.SpawnBounds
 
 type ActiveRecord = {
 	model: Model,
 	position: Vector3,
 }
-
-local function getPartWorldCorners(part: BasePart): { Vector3 }
-	local cf = part.CFrame
-	local h = part.Size * 0.5
-	return {
-		cf * Vector3.new(-h.X, -h.Y, -h.Z),
-		cf * Vector3.new(h.X, -h.Y, -h.Z),
-		cf * Vector3.new(-h.X, h.Y, -h.Z),
-		cf * Vector3.new(h.X, h.Y, -h.Z),
-		cf * Vector3.new(-h.X, -h.Y, h.Z),
-		cf * Vector3.new(h.X, -h.Y, h.Z),
-		cf * Vector3.new(-h.X, h.Y, h.Z),
-		cf * Vector3.new(h.X, h.Y, h.Z),
-	}
-end
-
-local function getWorkspaceBaseplateTopY(): number?
-	local bp = Workspace:FindFirstChild("Baseplate")
-	if bp and bp:IsA("BasePart") then
-		return bp.Position.Y + bp.Size.Y * 0.5
-	end
-	return nil
-end
-
-local function computeBounds(): ArenaBounds?
-	local folder = Workspace:FindFirstChild(BOUNDARY_FOLDER_NAME)
-	if not folder then
-		warn("[WaterSplashSpawner] Workspace folder '" .. BOUNDARY_FOLDER_NAME .. "' not found; spawner disabled.")
-		return nil
-	end
-
-	local minX, maxX = math.huge, -math.huge
-	local minZ, maxZ = math.huge, -math.huge
-	local minCornerY = math.huge
-	local partCount = 0
-
-	for _, desc in folder:GetDescendants() do
-		if desc:IsA("BasePart") then
-			for _, v in getPartWorldCorners(desc) do
-				if v.X < minX then minX = v.X end
-				if v.X > maxX then maxX = v.X end
-				if v.Z < minZ then minZ = v.Z end
-				if v.Z > maxZ then maxZ = v.Z end
-				if v.Y < minCornerY then minCornerY = v.Y end
-			end
-			partCount += 1
-		end
-	end
-
-	if partCount == 0 or minX >= maxX - 1e-4 or minZ >= maxZ - 1e-4 then
-		warn("[WaterSplashSpawner] BulletArenaBoundaries has no BaseParts or degenerate bounds; spawner disabled.")
-		return nil
-	end
-
-	local baseTop = getWorkspaceBaseplateTopY()
-	local floorY = if baseTop ~= nil then baseTop else minCornerY
-
-	return {
-		minX = minX,
-		maxX = maxX,
-		minZ = minZ,
-		maxZ = maxZ,
-		floorY = floorY,
-		widthX = maxX - minX,
-		depthZ = maxZ - minZ,
-	}
-end
 
 local function ensureTemplateHolder(): Folder
 	local existing = ServerStorage:FindFirstChild(TEMPLATE_HOLDER_NAME)
@@ -155,27 +93,124 @@ local function ensureTemplateHolder(): Folder
 	return folder
 end
 
-local function findAndStashTemplate(): Instance?
-	local existing = ServerStorage:FindFirstChild(TEMPLATE_HOLDER_NAME)
+local function getFishBillboardScale(visual: MatchSplashConfig.SplashVisual): number
+	return visual.fishBillboardScale or DEFAULT_FISH_BILLBOARD_SCALE
+end
+
+local function mountLayeredFishBillboard(
+	adornee: BasePart,
+	billboardPx: number,
+	fishImageId: string,
+	coverImageId: string?,
+	fishScale: number
+): BillboardGui
+	local existing = adornee:FindFirstChild(FISH_BILLBOARD_NAME)
 	if existing then
-		local cached = existing:FindFirstChild(WATER_TEMPLATE_NAME)
-		if cached then
-			return cached
-		end
+		existing:Destroy()
 	end
 
-	local template = Workspace:WaitForChild(WATER_TEMPLATE_NAME, 30)
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = FISH_BILLBOARD_NAME
+	billboard.Adornee = adornee
+	billboard.AlwaysOnTop = true
+	billboard.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	billboard.LightInfluence = 0
+	billboard.MaxDistance = 450
+	billboard.Size = UDim2.fromOffset(billboardPx, billboardPx)
+	billboard.Parent = adornee
+
+	local fishImage = Instance.new("ImageLabel")
+	fishImage.Name = "FishImage"
+	fishImage.BackgroundTransparency = 1
+	fishImage.AnchorPoint = Vector2.new(0.5, 0.5)
+	fishImage.Position = UDim2.fromScale(0.5, 0.5)
+	fishImage.Size = UDim2.fromScale(fishScale, fishScale)
+	fishImage.Image = fishImageId
+	fishImage.ScaleType = Enum.ScaleType.Fit
+	fishImage.ZIndex = 1
+	fishImage.Parent = billboard
+
+	if coverImageId and coverImageId ~= "" then
+		local splashImage = Instance.new("ImageLabel")
+		splashImage.Name = "SplashImage"
+		splashImage.BackgroundTransparency = 1
+		splashImage.Size = UDim2.fromScale(1, 1)
+		splashImage.Image = coverImageId
+		splashImage.ScaleType = Enum.ScaleType.Fit
+		splashImage.ZIndex = 2
+		splashImage.Parent = billboard
+	end
+
+	return billboard
+end
+
+local function buildBillboardSplashTemplate(visual: MatchSplashConfig.SplashVisual): Model?
+	local imageId = visual.imageId
+	if not imageId or imageId == "" then
+		warn(LOG_PREFIX .. " billboard_png map has no imageId; spawner disabled.")
+		return nil
+	end
+
+	local studs = visual.billboardStuds or 14
+	local px = math.floor(studs * 10)
+
+	local model = Instance.new("Model")
+	model.Name = BILLBOARD_TEMPLATE_NAME
+
+	local anchor = Instance.new("Part")
+	anchor.Name = "Anchor"
+	anchor.Size = Vector3.new(1, 0.2, 1)
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Massless = true
+	anchor.Parent = model
+	model.PrimaryPart = anchor
+
+	mountLayeredFishBillboard(anchor, px, SplashKillFishFrames.FALLBACK_IMAGE_ID, imageId, getFishBillboardScale(visual))
+
+	model.Parent = ensureTemplateHolder()
+	return model
+end
+
+local function findAndStashWaterTemplate(workspaceName: string): Instance?
+	local holder = ensureTemplateHolder()
+	local cached = holder:FindFirstChild(WATER_TEMPLATE_NAME)
+	if cached then
+		return cached
+	end
+
+	local template = Workspace:WaitForChild(workspaceName, 30)
 	if not template then
-		warn("[WaterSplashSpawner] Workspace.Water not found within 30s; spawner disabled.")
+		warn(string.format("%s Workspace.%s not found within 30s; spawner disabled.", LOG_PREFIX, workspaceName))
 		return nil
 	end
 	if not (template:IsA("Model") or template:IsA("BasePart")) then
-		warn("[WaterSplashSpawner] Workspace.Water must be a Model or BasePart; spawner disabled.")
+		warn(string.format("%s Workspace.%s must be a Model or BasePart; spawner disabled.", LOG_PREFIX, workspaceName))
 		return nil
 	end
 
-	template.Parent = ensureTemplateHolder()
+	template.Name = WATER_TEMPLATE_NAME
+	template.Parent = holder
 	return template
+end
+
+local function resolveSpawnTemplate(visual: MatchSplashConfig.SplashVisual): (Instance?, boolean)
+	if MatchSplashConfig.isBillboardMode(visual) then
+		local holder = ensureTemplateHolder()
+		local cached = holder:FindFirstChild(BILLBOARD_TEMPLATE_NAME)
+		if cached then
+			return cached, true
+		end
+		local built = buildBillboardSplashTemplate(visual)
+		return built, true
+	end
+
+	local workspaceName = visual.workspaceTemplateName or WATER_TEMPLATE_NAME
+	local template = findAndStashWaterTemplate(workspaceName)
+	return template, false
 end
 
 local function normalizeToModel(instance: Instance): Model
@@ -210,7 +245,6 @@ local function configureSplashParts(model: Model)
 		if descendant:IsA("BasePart") then
 			descendant.Anchored = true
 			descendant.CanCollide = false
-			-- CanQuery must be true so anti-air raycasts in AntiAirRicochetProjectile hit splashes.
 			descendant.CanQuery = true
 			descendant.CanTouch = false
 			descendant.Massless = true
@@ -229,7 +263,6 @@ local function forceWhiteOpaqueEmitters(model: Model)
 		if descendant:IsA("ParticleEmitter") then
 			descendant.Color = SPLASH_WHITE_COLOR_SEQ
 			descendant.Transparency = SPLASH_OPAQUE_TRANSPARENCY_SEQ
-			-- Ignore world lighting; black Ambient + voxel shadows would otherwise tint particles gray.
 			descendant.LightInfluence = 0
 			descendant.LightEmission = 1
 		end
@@ -289,9 +322,6 @@ local function runLifecycle(model: Model, _targetScale: number, position: Vector
 	local record: ActiveRecord = { model = model, position = position }
 	table.insert(active, record)
 
-	-- Abort whenever the conveyor system (or anything else) re-parents or destroys the model
-	-- mid-lifecycle. On a successful "kill", ConveyorSystem moves the model to ConveyorDeathVFX
-	-- for the float-to-turret animation; we must stop touching it then.
 	local aborted = false
 	local ancestryConn: RBXScriptConnection
 	ancestryConn = model.AncestryChanged:Connect(function(_, parent)
@@ -313,8 +343,6 @@ local function runLifecycle(model: Model, _targetScale: number, position: Vector
 	end)
 
 	task.spawn(function()
-		-- No BasePart / Decal / Texture transparency animation: lerping over the gray baseplate
-		-- made white foam read as gray. Emitters keep their asset-defined curves.
 		local tIntro = os.clock()
 		while os.clock() - tIntro < FADE_IN_SECONDS and isAlive() do
 			RunService.Heartbeat:Wait()
@@ -342,7 +370,13 @@ local function runLifecycle(model: Model, _targetScale: number, position: Vector
 	end)
 end
 
-local function trySpawn(template: Instance, bounds: ArenaBounds, activeFolder: Folder): boolean
+local function trySpawn(
+	template: Instance,
+	bounds: ArenaBounds,
+	activeFolder: Folder,
+	useBillboardVisual: boolean,
+	splashVisual: MatchSplashConfig.SplashVisual
+): boolean
 	local innerWidth = math.max(bounds.widthX - 2 * SPAWN_MARGIN, 0)
 	local innerDepth = math.max(bounds.depthZ - 2 * SPAWN_MARGIN, 0)
 
@@ -352,7 +386,7 @@ local function trySpawn(template: Instance, bounds: ArenaBounds, activeFolder: F
 		local x = bounds.minX + SPAWN_MARGIN + math.random() * innerWidth
 		local z = bounds.minZ + SPAWN_MARGIN + math.random() * innerDepth
 		local pos = Vector3.new(x, surfaceY, z)
-		if not isBlockedBySpacing(pos) then
+		if not isBlockedBySpacing(pos) and not SplashSpawnExclusions.isNearTurret(pos) and SplashArenaInterior.isInsideArena(pos) then
 			local clone = template:Clone()
 			local model = normalizeToModel(clone)
 			if not model.PrimaryPart then
@@ -362,18 +396,18 @@ local function trySpawn(template: Instance, bounds: ArenaBounds, activeFolder: F
 
 			sanitizeModel(model)
 			configureSplashParts(model)
-			forceWhiteOpaqueEmitters(model)
+			if not useBillboardVisual then
+				forceWhiteOpaqueEmitters(model)
+			end
 
 			local scale = SCALE_MIN + math.random() * (SCALE_MAX - SCALE_MIN)
 			safeScaleTo(model, scale)
 
-			-- Make this splash a valid conveyor target so anti-air bullets red-flash + award cash.
 			local hp = math.random(SPLASH_HEALTH_MIN, SPLASH_HEALTH_MAX)
 			model:SetAttribute(CONVEYOR_ITEM_ATTRIBUTE, true)
 			model:SetAttribute(CONVEYOR_MAX_HEALTH_ATTRIBUTE, hp)
 			model:SetAttribute(CONVEYOR_HEALTH_ATTRIBUTE, hp)
 			model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, math.random(SPLASH_CASH_MIN, SPLASH_CASH_MAX))
-			-- ConveyorSystem reads this when floating dead items to the turret; preserve our spawn scale.
 			model:SetAttribute(CONVEYOR_SCALE_ATTRIBUTE, scale)
 			model:SetAttribute(IS_WATER_SPLASH_ATTRIBUTE, true)
 			local splashFishImageId, splashFishTier = SplashKillFishFrames.pickGameplayFish()
@@ -381,11 +415,34 @@ local function trySpawn(template: Instance, bounds: ArenaBounds, activeFolder: F
 			model:SetAttribute(SplashKillFishFrames.RARITY_ATTRIBUTE, splashFishTier)
 			fireSplashKillFishPreloadToAll(splashFishImageId)
 
+			local anchor = model.PrimaryPart
+			if anchor then
+				local billboardPx = math.floor((splashVisual.billboardStuds or DEFAULT_BILLBOARD_STUDS) * 10)
+				local fishScale = getFishBillboardScale(splashVisual)
+				if useBillboardVisual then
+					local splashBillboard = anchor:FindFirstChild(FISH_BILLBOARD_NAME)
+					if splashBillboard and splashBillboard:IsA("BillboardGui") then
+						splashBillboard.Size = UDim2.fromOffset(billboardPx, billboardPx)
+						local fishImage = splashBillboard:FindFirstChild("FishImage")
+						if fishImage and fishImage:IsA("ImageLabel") then
+							fishImage.Image = splashFishImageId
+							fishImage.Size = UDim2.fromScale(fishScale, fishScale)
+						end
+					end
+				else
+					-- Workspace.Water: keep fish ImageLabel for preload, hidden behind 3D water.
+					local billboard = mountLayeredFishBillboard(anchor, billboardPx, splashFishImageId, nil, fishScale)
+					local fishImage = billboard:FindFirstChild("FishImage")
+					if fishImage and fishImage:IsA("ImageLabel") then
+						fishImage.ImageTransparency = 1
+					end
+				end
+			end
+
 			local yaw = math.random() * math.pi * 2
 			model:PivotTo(CFrame.new(pos) * CFrame.Angles(0, yaw, 0))
 			snapToFloor(model, bounds.floorY, SPAWN_LIFT_ABOVE_BASEPLATE + Y_OFFSET)
 
-			-- Big invisible hit collider so small/thin splash meshes are still easy to shoot.
 			local splashCenter = model:GetPivot().Position
 			local hit = Instance.new("Part")
 			hit.Name = HIT_COLLIDER_NAME
@@ -411,25 +468,56 @@ local function trySpawn(template: Instance, bounds: ArenaBounds, activeFolder: F
 	return false
 end
 
-local template = findAndStashTemplate()
-if not template then
-	return
-end
 
-local bounds = computeBounds()
-if not bounds then
-	return
-end
+local function start()
+	print(string.format("%s build=%s PlaceId=%s", LOG_PREFIX, BUILD_TAG, tostring(game.PlaceId)))
 
-math.randomseed(DateTime.now().UnixTimestampMillis)
+	MatchSplashConfig.ensureActiveMapIdOnServer()
 
-local activeFolder = getOrCreateActiveFolder()
-
-task.spawn(function()
-	while true do
-		if #active < MAX_ACTIVE_SPLASHES then
-			trySpawn(template, bounds, activeFolder)
-		end
-		task.wait(SPAWN_INTERVAL)
+	local splashVisual = MatchSplashConfig.getForMapId("main")
+	local template, useBillboardVisual = resolveSpawnTemplate(splashVisual)
+	if not template then
+		warn(string.format(
+			"%s No spawn template for map=main mode=%s (PlaceId=%s)",
+			LOG_PREFIX,
+			splashVisual.mode,
+			tostring(game.PlaceId)
+		))
+		return
 	end
-end)
+
+	print(string.format(
+		"%s Started map=main mode=%s billboard=%s",
+		LOG_PREFIX,
+		splashVisual.mode,
+		tostring(useBillboardVisual)
+	))
+
+	if not SplashArenaInterior.refresh() then
+		warn(LOG_PREFIX .. " Spawner disabled (arena interior bounds).")
+		return
+	end
+
+	local bounds = SplashArenaInterior.getSpawnBounds()
+	if not bounds then
+		return
+	end
+
+	SplashSpawnExclusions.refresh()
+
+	math.randomseed(DateTime.now().UnixTimestampMillis)
+
+	local activeFolder = getOrCreateActiveFolder()
+
+	task.spawn(function()
+		while true do
+			if #active < MAX_ACTIVE_SPLASHES then
+				trySpawn(template, bounds, activeFolder, useBillboardVisual, splashVisual)
+			end
+			task.wait(SPAWN_INTERVAL)
+		end
+	end)
+
+end
+
+start()

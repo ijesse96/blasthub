@@ -10,6 +10,7 @@ local BattleGridSides = require(shared:WaitForChild("BattleGridSides"))
 local BattleCombatEngine = require(shared:WaitForChild("BattleCombatEngine"))
 local BattleLayoutTypes = require(shared:WaitForChild("BattleLayoutTypes"))
 local BattleUnitStats = require(shared:WaitForChild("BattleUnitStats"))
+local BattleMapDemoData = require(shared:WaitForChild("BattleMapDemoData"))
 local FishCollectionService = require(shared:WaitForChild("FishCollectionService"))
 local SplashFishCatalog = require(shared:WaitForChild("SplashFishCatalog"))
 
@@ -27,6 +28,7 @@ local STUDIO_BOT_DELAY_SECONDS = 1.5
 
 local REMOTES_NAME = "LobbyRemotes"
 local REMOTE_JOIN = "JoinBattleQueue"
+local REMOTE_ATTACK_CASTLE = "AttackCastle"
 local REMOTE_LEAVE = "LeaveBattleQueue"
 local REMOTE_MATCH_FOUND = "MatchFound"
 local REMOTE_STATE = "BattlePlacementState"
@@ -48,6 +50,7 @@ type BattleSession = {
 	phase: "placement" | "combat" | "ended",
 	placementEndServerTime: number,
 	botSideB: boolean,
+	botDisplayName: string?,
 	combatState: BattleCombatEngine.CombatState?,
 	combatLoopId: number?,
 	accumulatedEvents: { BattleCombatEvent }?,
@@ -141,9 +144,49 @@ local function findByImageId(layout: SideLayout, imageId: string): PlacementUnit
 	return nil
 end
 
-local function playerInfo(userId: number, layout: SideLayout, ready: boolean, isBot: boolean?): BattleLayoutTypes.PlayerBattleInfo
+local function buildAutoLayout(userId: number, side: BattleSide): SideLayout
+	local owned = getOwnedMap(userId)
+	local entries: { { imageId: string, count: number } } = {}
+	for imageId, count in owned do
+		if count > 0 then
+			table.insert(entries, { imageId = imageId, count = count })
+		end
+	end
+	table.sort(entries, function(a, b)
+		if a.count ~= b.count then
+			return a.count > b.count
+		end
+		return a.imageId < b.imageId
+	end)
+
+	local cells = BattleGridSides.deploymentCellsForSide(side)
+	local layout: SideLayout = {}
+	for i, entry in entries do
+		if i > #cells then
+			break
+		end
+		local cell = cells[i]
+		table.insert(layout, {
+			imageId = entry.imageId,
+			col = cell.col,
+			row = cell.row,
+			level = BattleUnitStats.getLevelFromCopyCount(entry.count),
+		})
+	end
+	return layout
+end
+
+local function playerInfo(
+	userId: number,
+	layout: SideLayout,
+	ready: boolean,
+	isBot: boolean?,
+	botDisplayName: string?
+): BattleLayoutTypes.PlayerBattleInfo
 	local name = "Bot"
-	if userId > 0 then
+	if isBot and botDisplayName and botDisplayName ~= "" then
+		name = botDisplayName
+	elseif userId > 0 then
 		local plr = Players:GetPlayerByUserId(userId)
 		name = if plr then plr.DisplayName else ("Player" .. tostring(userId))
 	end
@@ -167,8 +210,8 @@ local function buildStateForPlayer(session: BattleSession, userId: number): Batt
 		phase = session.phase,
 		localSide = side,
 		placementEndServerTime = session.placementEndServerTime,
-		playerA = playerInfo(session.userIdA, session.layoutA, session.readyA, false),
-		playerB = playerInfo(session.userIdB, session.layoutB, session.readyB, session.botSideB),
+		playerA = playerInfo(session.userIdA, session.layoutA, session.readyA, false, nil),
+		playerB = playerInfo(session.userIdB, session.layoutB, session.readyB, session.botSideB, session.botDisplayName),
 		layoutA = session.layoutA,
 		layoutB = session.layoutB,
 		maxBaseHp = BattleGridConfig.STARTING_BASE_HP,
@@ -448,40 +491,12 @@ local function runBotPlacement(session: BattleSession)
 	if not session.botSideB then
 		return
 	end
-	local owned = getOwnedMap(session.userIdA)
-	local ids: { string } = {}
-	for imageId, count in owned do
-		if count > 0 then
-			table.insert(ids, imageId)
-		end
-	end
-	if #ids == 0 then
-		session.readyB = true
-		return
-	end
-
-	local layout: SideLayout = {}
-	local maxPlace = math.min(BattleGridConfig.MAX_UNITS_PER_SIDE, math.min(6, #ids))
-	for i = 1, maxPlace do
-		local imageId = ids[((i - 1) % #ids) + 1]
-		local _, copyCount = validateOwnedFish(session.userIdA, imageId)
-		local level = BattleUnitStats.getLevelFromCopyCount(copyCount)
-		local col = (i - 1) % BattleGridConfig.COLS
-		local row = math.floor((i - 1) / BattleGridConfig.COLS) % (BattleGridConfig.SIDE_B_MAX_ROW + 1)
-		table.insert(layout, {
-			imageId = imageId,
-			col = col,
-			row = row,
-			level = level,
-		})
-	end
-	session.layoutB = layout
 	session.readyB = true
 	broadcastState(session)
 	tryStartCombat(session)
 end
 
-function M.createSession(userIdA: number, userIdB: number, botSideB: boolean)
+function M.createSession(userIdA: number, userIdB: number, botSideB: boolean, botDisplayName: string?)
 	local session: BattleSession = {
 		id = nextSessionId(),
 		userIdA = userIdA,
@@ -495,6 +510,7 @@ function M.createSession(userIdA: number, userIdB: number, botSideB: boolean)
 			then Workspace:GetServerTimeNow() + BattleGridConfig.PLACEMENT_SECONDS
 			else Workspace:GetServerTimeNow() + 86400 * 365,
 		botSideB = botSideB,
+		botDisplayName = botDisplayName,
 		combatState = nil,
 		combatLoopId = 0,
 		accumulatedEvents = {},
@@ -514,6 +530,11 @@ function M.createSession(userIdA: number, userIdB: number, botSideB: boolean)
 		if plrB then
 			matchRemote:FireClient(plrB, { sessionId = session.id, opponentUserId = userIdA })
 		end
+	end
+
+	if BattleGridConfig.AUTO_FILL_PLACEMENT then
+		session.layoutA = buildAutoLayout(userIdA, "A")
+		session.layoutB = buildAutoLayout(if botSideB then userIdA else userIdB, "B")
 	end
 
 	broadcastState(session)
@@ -614,6 +635,33 @@ function M.onLeaveQueue(player: Player)
 	fireQueueStatus(player, false, nil)
 end
 
+function M.onAttackCastle(player: Player, payload: any)
+	if sessionByUserId[player.UserId] then
+		fireQueueStatus(player, false, "Already in a battle.")
+		return
+	end
+	if countOwnedFish(player.UserId) < 1 then
+		fireQueueStatus(player, false, "Collect at least one fish before battling.")
+		return
+	end
+	if typeof(payload) ~= "table" then
+		fireQueueStatus(player, false, "Invalid attack request.")
+		return
+	end
+	local castleId = payload.castleId
+	if typeof(castleId) ~= "string" or castleId == "" then
+		fireQueueStatus(player, false, "Invalid attack request.")
+		return
+	end
+	local castle = BattleMapDemoData.getCastleById(castleId)
+	if not castle or castle.isLocalPlayer then
+		fireQueueStatus(player, false, "Cannot attack that castle.")
+		return
+	end
+	removeFromQueue(player.UserId)
+	M.createSession(player.UserId, BOT_USER_ID, true, castle.playerName)
+end
+
 function M.onSetReady(player: Player)
 	local session = sessionByUserId[player.UserId]
 	if not session or session.phase ~= "placement" then
@@ -667,7 +715,7 @@ function M.onPlacementAction(player: Player, payload: any)
 		if not BattleGridSides.cellInSide(col, row, side) then
 			return
 		end
-		if countLayout(newLayout) >= BattleGridConfig.MAX_UNITS_PER_SIDE then
+		if countLayout(newLayout) >= BattleGridSides.maxUnitsForSide(side) then
 			return
 		end
 		if findAt(newLayout, col, row) or findByImageId(newLayout, imageId) then
@@ -810,6 +858,9 @@ function M.bindRemotes()
 
 	getRemote(REMOTE_JOIN).OnServerEvent:Connect(function(player: Player)
 		M.onJoinQueue(player)
+	end)
+	getRemote(REMOTE_ATTACK_CASTLE).OnServerEvent:Connect(function(player: Player, payload: any)
+		M.onAttackCastle(player, payload)
 	end)
 	getRemote(REMOTE_LEAVE).OnServerEvent:Connect(function(player: Player)
 		M.onLeaveQueue(player)

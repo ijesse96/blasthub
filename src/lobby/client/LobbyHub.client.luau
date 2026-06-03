@@ -12,6 +12,7 @@ local RewardUiColors = require(shared:WaitForChild("RewardUiColors"))
 local FishCollectionInventory = require(script.Parent:WaitForChild("FishCollectionInventory"))
 local LobbyHubActions = require(script.Parent:WaitForChild("LobbyHubActions"))
 local LobbyTouchInputSuppress = require(script.Parent:WaitForChild("LobbyTouchInputSuppress"))
+local BattleMapUi = require(script.Parent:WaitForChild("BattleMapUi"))
 local BattleQueue = require(script.Parent:WaitForChild("BattleQueue"))
 
 local REMOTES_NAME = "LobbyRemotes"
@@ -927,7 +928,10 @@ end
 local function getMapsForSelect(): { MatchMaps.MatchMap }
 	if mapSelectMode == "collection" then
 		local collectedIds = FishCollectionInventory.getCollectedMapIds()
-		local idSet: { [string]: boolean } = { [MatchMaps.DEFAULT_MAP_ID] = true }
+		local idSet: { [string]: boolean } = {}
+		for _, map in MatchMaps.getCollectionEnabledMaps() do
+			idSet[map.id] = true
+		end
 		for _, id in collectedIds do
 			idSet[id] = true
 		end
@@ -1316,6 +1320,7 @@ task.spawn(function()
 	local ok, err = pcall(function()
 		FishCollectionInventory.init()
 		FishCollectionInventory.setOnCloseToMapPicker(openCollectionMapSelect)
+		BattleMapUi.init()
 		BattleQueue.init()
 		bindRemotes()
 	end)

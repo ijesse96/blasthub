@@ -1,5 +1,8 @@
 {
   "name": "BlastHubLobby",
+  "placeId": 80900269298159,
+  "servePlaceIds": [80900269298159],
+  "servePort": 34872,
   "tree": {
     "$className": "DataModel",
     "ReplicatedStorage": {

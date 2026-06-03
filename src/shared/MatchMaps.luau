@@ -10,6 +10,8 @@ export type MatchMap = {
 	sortOrder: number,
 	-- rbxassetid://... ; nil or omit = placeholder tile in lobby map grid
 	thumbnailImage: string?,
+	-- Lobby collection picker + inventory tabs (even at 0 collected).
+	collectionEnabled: boolean?,
 }
 
 local mapsById: { [string]: MatchMap } = {
@@ -21,24 +23,27 @@ local mapsById: { [string]: MatchMap } = {
 		firstPlaceBonus = 100,
 		sortOrder = 1,
 		thumbnailImage = "rbxassetid://118675753644542",
+		collectionEnabled = true,
 	},
 	king_of_the_jungle = {
 		id = "king_of_the_jungle",
 		displayName = "King of the Jungle",
-		placeId = 0,
+		placeId = PlaceIds.KingOfTheJungle,
 		entryFee = 50,
 		firstPlaceBonus = 0,
 		sortOrder = 2,
 		thumbnailImage = "rbxassetid://110244679893761",
+		collectionEnabled = true,
 	},
 	dragon_quest = {
 		id = "dragon_quest",
 		displayName = "Dragon Quest",
-		placeId = 0,
+		placeId = PlaceIds.DragonQuest,
 		entryFee = 100,
 		firstPlaceBonus = 0,
 		sortOrder = 3,
 		thumbnailImage = "rbxassetid://71683561033302",
+		collectionEnabled = true,
 	},
 	haunted_mansion = {
 		id = "haunted_mansion",
@@ -81,6 +86,22 @@ function MatchMaps.getAll(): { MatchMap }
 	local list: { MatchMap } = {}
 	for _, map in mapsById do
 		table.insert(list, map)
+	end
+	table.sort(list, function(a, b)
+		if a.sortOrder ~= b.sortOrder then
+			return a.sortOrder < b.sortOrder
+		end
+		return a.displayName < b.displayName
+	end)
+	return list
+end
+
+function MatchMaps.getCollectionEnabledMaps(): { MatchMap }
+	local list: { MatchMap } = {}
+	for _, map in mapsById do
+		if map.collectionEnabled then
+			table.insert(list, map)
+		end
 	end
 	table.sort(list, function(a, b)
 		if a.sortOrder ~= b.sortOrder then

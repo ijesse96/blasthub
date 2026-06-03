@@ -5,7 +5,16 @@ local BattleUiConfig = {
 	COMPACT_VIEWPORT_X = 700,
 	COMPACT_VIEWPORT_Y = 500,
 
-	ROOT_INSET = 6,
+	BACKGROUND_COLOR = Color3.new(0, 0, 0),
+	ROOT_INSET = 0,
+
+	-- Side accent colors (kept in sync with grid tile colors).
+	SIDE_A_ACCENT = Color3.fromRGB(32, 52, 88),
+	SIDE_B_ACCENT = Color3.fromRGB(72, 36, 40),
+
+	SHOW_BATTLE_MODE_TITLE = false,
+	SHOW_PHASE_TIMER_LABEL = false,
+	SHOW_ENEMY_PANEL = false,
 	HEADER_HEIGHT = 44,
 	HEADER_HEIGHT_COMPACT = 36,
 	FOOTER_HEIGHT = 52,
@@ -41,6 +50,7 @@ local BattleUiConfig = {
 	Z_FOOTER = 20,
 	Z_SIDEBAR = 15,
 	Z_GRID = 10,
+	Z_COMBAT = 200,
 }
 
 return BattleUiConfig

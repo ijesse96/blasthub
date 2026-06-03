@@ -1,0 +1,105 @@
+{
+  "name": "BlastHubDragonQuest",
+  "placeId": 130967805909090,
+  "servePlaceIds": [130967805909090],
+  "servePort": 34876,
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": {
+        "$path": "src/shared"
+      },
+      "ActiveMapId": {
+        "$className": "StringValue",
+        "$properties": {
+          "Value": "dragon_quest"
+        }
+      },
+      "commonsplashfishframes": {
+        "$className": "Folder",
+        "Atlas": {
+          "$className": "StringValue",
+          "$properties": {
+            "Value": "rbxassetid://138790142443698"
+          }
+        }
+      }
+    },
+    "ServerStorage": {
+      "ConveyorItems": {
+        "$path": "src/serverstorage/ConveyorItems"
+      }
+    },
+    "ServerScriptService": {
+      "PlaceServer": {
+        "$path": "src/places/dragon_quest/server"
+      },
+      "Server": {
+        "$path": "src/server"
+      }
+    },
+    "StarterGui": {
+      "$className": "StarterGui",
+      "$properties": {
+        "ScreenOrientation": "LandscapeSensor"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "ArenaClient": {
+          "$path": "src/arena/client"
+        },
+        "PlaceClient": {
+          "$path": "src/places/dragon_quest/client"
+        }
+      }
+    },
+    "Workspace": {
+      "$properties": {
+        "FilteringEnabled": true
+      },
+      "Anti Air": {
+        "$path": "src/workspace/Anti Air"
+      },
+      "Baseplate": {
+        "$className": "Part",
+        "$properties": {
+          "Anchored": true,
+          "Color": [0.38823, 0.37254, 0.38823],
+          "Locked": true,
+          "Position": [0, -10, 0],
+          "Size": [512, 20, 512]
+        },
+        "WaterBackground": {
+          "$className": "Texture",
+          "$properties": {
+            "Face": "Top",
+            "Texture": "rbxassetid://110147544715077",
+            "StudsPerTileU": 32,
+            "StudsPerTileV": 32
+          }
+        }
+      },
+      "BulletArenaBoundaries": {
+        "$path": "src/workspace/BulletArenaBoundaries.rbxm"
+      },
+      "Map": {
+        "$path": "src/workspace/Map.rbxm"
+      }
+    },
+    "Lighting": {
+      "$properties": {
+        "Ambient": [0, 0, 0],
+        "Brightness": 2,
+        "GlobalShadows": true,
+        "Outlines": false,
+        "Technology": "Voxel"
+      }
+    },
+    "SoundService": {
+      "$properties": {
+        "RespectFilteringEnabled": true
+      }
+    }
+  }
+}
