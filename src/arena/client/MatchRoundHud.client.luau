@@ -7,19 +7,56 @@ local REMOTES_FOLDER_NAME = "MatchRoundRemotes"
 local STATE_EVENT_NAME = "RoundState"
 local CONTINUE_PROMPT_EVENT_NAME = "ContinuePrompt"
 local CONTINUE_RESPONSE_EVENT_NAME = "ContinueResponse"
+local RETURN_TO_LOBBY_EVENT_NAME = "RequestReturnToLobby"
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local Workspace = game:GetService("Workspace")
 local RewardUiColors = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RewardUiColors"))
+local MatchRoundHudBootstrap = require(script.Parent:WaitForChild("MatchRoundHudBootstrap"))
+
+local TIMER_TAB_BG_DEFAULT = Color3.fromRGB(26, 30, 42)
+local TIMER_TAB_STROKE_DEFAULT = Color3.fromRGB(90, 100, 130)
+local TIMER_TAB_STROKE_TRANSPARENCY_DEFAULT = 0.45
+local TIMER_TAB_STROKE_THICKNESS_DEFAULT = 1
+local TIMER_SUBTITLE_DEFAULT = Color3.fromRGB(190, 200, 230)
+local TIMER_CLOCK_DEFAULT = Color3.fromRGB(220, 230, 255)
+
+local INTERMISSION_TAB_BG = Color3.fromRGB(48, 38, 22)
+local INTERMISSION_STROKE = RewardUiColors.LEGENDARY_ACCENT_GOLD
+local INTERMISSION_TEXT = RewardUiColors.LEGENDARY_ACCENT_GOLD_BRIGHT
+
+local ACTIVE_ROUND_TAB_BG = Color3.fromRGB(22, 42, 30)
+local ACTIVE_ROUND_STROKE = RewardUiColors.PROFIT_GREEN
+local ACTIVE_ROUND_TEXT = RewardUiColors.FISH_COMMON_GREEN_BRIGHT
 
 local remotesFolder = ReplicatedStorage:WaitForChild(REMOTES_FOLDER_NAME)
 local roundStateEvent = remotesFolder:WaitForChild(STATE_EVENT_NAME) :: RemoteEvent
 local continuePromptEvent = remotesFolder:WaitForChild(CONTINUE_PROMPT_EVENT_NAME) :: RemoteEvent
 local continueResponseEvent = remotesFolder:WaitForChild(CONTINUE_RESPONSE_EVENT_NAME) :: RemoteEvent
+local returnToLobbyEvent = remotesFolder:WaitForChild(RETURN_TO_LOBBY_EVENT_NAME) :: RemoteEvent
+
+local MATCH_ROUND_HUD_GUI_NAME = "MatchRoundHud"
+local CANONICAL_HUD_ATTR = "MatchRoundHudCanonical"
+
+if not MatchRoundHudBootstrap.isCanonicalScript(script) then
+	return
+end
+
+MatchRoundHudBootstrap.destroyLegacyScripts(player)
+task.defer(function()
+	MatchRoundHudBootstrap.destroyLegacyScripts(player)
+end)
+
+for _, gui in playerGui:GetChildren() do
+	if gui:IsA("ScreenGui") and gui.Name == MATCH_ROUND_HUD_GUI_NAME then
+		gui:Destroy()
+	end
+end
 
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "MatchRoundHud"
+screenGui.Name = MATCH_ROUND_HUD_GUI_NAME
+screenGui:SetAttribute(CANONICAL_HUD_ATTR, true)
 screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = true
 screenGui.DisplayOrder = 90
@@ -97,6 +134,11 @@ timerTabClock.TextWrapped = false
 timerTabClock.Text = "--"
 timerTabClock.Parent = roundTimerTab
 
+local timerTabScale = Instance.new("UIScale")
+timerTabScale.Name = "TimerTabScale"
+timerTabScale.Scale = 1
+timerTabScale.Parent = roundTimerTab
+
 -- Continue prompt: standalone simple panel (no shared styling with other HUD).
 local CONTINUE_PANEL = Color3.fromRGB(42, 44, 52)
 local CONTINUE_TEXT = Color3.fromRGB(255, 255, 255)
@@ -167,6 +209,41 @@ noButton.Parent = continueFrame
 local noButtonCorner = Instance.new("UICorner")
 noButtonCorner.CornerRadius = UDim.new(0, 4)
 noButtonCorner.Parent = noButton
+
+local exitButton = Instance.new("TextButton")
+exitButton.Name = "Exit"
+exitButton.AnchorPoint = Vector2.new(1, 1)
+exitButton.Position = UDim2.new(1, -16, 1, -16)
+exitButton.Size = UDim2.fromOffset(120, 44)
+exitButton.BackgroundColor3 = CONTINUE_NO
+exitButton.BorderSizePixel = 0
+exitButton.Font = Enum.Font.GothamBold
+exitButton.TextSize = 18
+exitButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+exitButton.Text = "Exit"
+exitButton.Visible = false
+exitButton.ZIndex = 3
+exitButton.Parent = screenGui
+
+local exitButtonCorner = Instance.new("UICorner")
+exitButtonCorner.CornerRadius = UDim.new(0, 8)
+exitButtonCorner.Parent = exitButton
+
+local EXIT_BUTTON_TEXT = "Exit"
+local EXIT_LEAVING_TEXT = "Leaving…"
+local EXIT_FAIL_REENABLE_SECONDS = 8
+local exitBusy = false
+
+local function setExitButtonBusy(busy: boolean)
+	exitBusy = busy
+	exitButton.Active = not busy
+	exitButton.AutoButtonColor = not busy
+	exitButton.Text = if busy then EXIT_LEAVING_TEXT else EXIT_BUTTON_TEXT
+end
+
+local function applyExitButtonVisibility()
+	exitButton.Visible = phaseValue ~= "Idle"
+end
 
 local PROFIT_BILLBOARD_NAME = "MatchRoundHudProfitBillboard"
 local PROFIT_BILLBOARD_LABEL_NAME = "ProfitTextBillboard"
@@ -415,6 +492,41 @@ local function formatSeconds(secondsLeft: number): string
 	return string.format("%d:%02d", minutes, seconds)
 end
 
+local function resetTimerTabStyle()
+	roundTimerTab.BackgroundColor3 = TIMER_TAB_BG_DEFAULT
+	timerTabStroke.Color = TIMER_TAB_STROKE_DEFAULT
+	timerTabStroke.Transparency = TIMER_TAB_STROKE_TRANSPARENCY_DEFAULT
+	timerTabStroke.Thickness = TIMER_TAB_STROKE_THICKNESS_DEFAULT
+	timerTabSubtitle.TextColor3 = TIMER_SUBTITLE_DEFAULT
+	timerTabClock.TextColor3 = TIMER_CLOCK_DEFAULT
+	timerTabScale.Scale = 1
+end
+
+local function applyIntermissionTimerStyle(secondsLeft: number)
+	roundTimerTab.BackgroundColor3 = INTERMISSION_TAB_BG
+	timerTabStroke.Color = INTERMISSION_STROKE
+	timerTabSubtitle.TextColor3 = INTERMISSION_TEXT
+	timerTabClock.TextColor3 = INTERMISSION_TEXT
+
+	local pulseHz = if secondsLeft <= 3 then 2.2 else 1.4
+	local amp = if secondsLeft <= 3 then 0.09 else 0.06
+	local t = os.clock()
+	local wave = math.sin(t * pulseHz * math.pi * 2)
+	timerTabScale.Scale = 1 + amp * wave
+	timerTabStroke.Transparency = 0.15 + 0.25 * math.abs(wave)
+	timerTabStroke.Thickness = if secondsLeft <= 3 then 2 else 1.5
+end
+
+local function applyActiveRoundTimerStyle()
+	roundTimerTab.BackgroundColor3 = ACTIVE_ROUND_TAB_BG
+	timerTabStroke.Color = ACTIVE_ROUND_STROKE
+	timerTabStroke.Transparency = 0.25
+	timerTabStroke.Thickness = 1.5
+	timerTabSubtitle.TextColor3 = ACTIVE_ROUND_TEXT
+	timerTabClock.TextColor3 = ACTIVE_ROUND_TEXT
+	timerTabScale.Scale = 1
+end
+
 -- Prefix for the name line when this slot's occupant matches server leaderboard[1].
 local FIRST_PLACE_NAME_PREFIX = "👑 "
 -- Matches server MatchRoundSession MIN_HUMANS_FOR_FIRST_PLACE_BONUS (crown only when first-place bonus can apply).
@@ -612,6 +724,7 @@ roundStateEvent.OnClientEvent:Connect(function(payload)
 	lastProfitBoardPayload = payload
 	updateProfitBoardText(payload)
 	applyMenuResetPolicy()
+	applyExitButtonVisibility()
 end)
 
 continuePromptEvent.OnClientEvent:Connect(function(payload)
@@ -658,10 +771,32 @@ noButton.MouseButton1Click:Connect(function()
 	continueFrame.Visible = false
 end)
 
+exitButton.MouseButton1Click:Connect(function()
+	if exitBusy or phaseValue == "Idle" then
+		return
+	end
+	setExitButtonBusy(true)
+	returnToLobbyEvent:FireServer()
+	task.delay(EXIT_FAIL_REENABLE_SECONDS, function()
+		if exitBusy then
+			setExitButtonBusy(false)
+		end
+	end)
+end)
+
 RunService.RenderStepped:Connect(function()
 	local now = Workspace:GetServerTimeNow()
-	local timeSegment = if roundEndServerTime > 0 then formatSeconds(roundEndServerTime - now) else "--"
+	local secondsLeft = if roundEndServerTime > 0 then roundEndServerTime - now else 0
+	local timeSegment = if roundEndServerTime > 0 then formatSeconds(secondsLeft) else "--"
 	timerTabClock.Text = timeSegment
+
+	if phaseValue == "Intermission" then
+		applyIntermissionTimerStyle(secondsLeft)
+	elseif phaseValue == "ActiveRound" then
+		applyActiveRoundTimerStyle()
+	else
+		resetTimerTabStyle()
+	end
 
 	local dualLine = phaseValue == "Intermission"
 		or (phaseValue == "ActiveRound" and not isLocalPlayerInRoundLeaderboard(lastProfitBoardPayload))
@@ -702,3 +837,4 @@ RunService.RenderStepped:Connect(function()
 end)
 
 applyMenuResetPolicy()
+applyExitButtonVisibility()

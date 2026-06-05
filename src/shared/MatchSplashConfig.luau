@@ -16,6 +16,7 @@ export type SplashVisual = {
 	billboardStuds: number?,
 	fishBillboardScale: number?,
 	hitNetTextureId: string?,
+	hitNetTextureIdRed: string?,
 	-- Override hit-net BillboardGui pixel size (bbox-based sizing uses huge flat-decal anchors).
 	hitNetBillboardPx: number?,
 	sandCoverImageId: string?,
@@ -36,6 +37,7 @@ local FISH_FRENZY_SPLASH_FRAMES = {
 }
 local JUNGLE_SPLASH_IMAGE = "rbxassetid://110419001189017"
 local DEFAULT_HIT_NET = "rbxassetid://135625585340416"
+local DEFAULT_HIT_NET_RED = "rbxassetid://106446005308723"
 local DEFAULT_SAND_COVER = "rbxassetid://122141499309246"
 local JUNGLE_SAND_COVER = "rbxassetid://74096649335349"
 
@@ -45,9 +47,10 @@ local byMapId: { [string]: SplashVisual } = {
 		workspaceTemplateName = nil,
 		imageId = FISH_FRENZY_SPLASH_FRAME_RIPPLE,
 		splashFrameIds = FISH_FRENZY_SPLASH_FRAMES,
-		billboardStuds = 8,
-		fishBillboardScale = 0.08,
+		billboardStuds = 6,
+		fishBillboardScale = 0.065,
 		hitNetTextureId = DEFAULT_HIT_NET,
+		hitNetTextureIdRed = DEFAULT_HIT_NET_RED,
 		sandCoverImageId = DEFAULT_SAND_COVER,
 		scrollWaterBackground = true,
 	},
@@ -56,7 +59,9 @@ local byMapId: { [string]: SplashVisual } = {
 		workspaceTemplateName = nil,
 		imageId = JUNGLE_SPLASH_IMAGE,
 		billboardStuds = 9,
+		fishBillboardScale = 0.32,
 		hitNetTextureId = DEFAULT_HIT_NET,
+		hitNetTextureIdRed = DEFAULT_HIT_NET_RED,
 		sandCoverImageId = JUNGLE_SAND_COVER,
 		reelLeafImageId = "rbxassetid://85727082053287",
 		scrollWaterBackground = false,
@@ -68,8 +73,9 @@ local byMapId: { [string]: SplashVisual } = {
 		billboardStuds = 14,
 		fishBillboardScale = 0.05,
 		hitNetTextureId = DEFAULT_HIT_NET,
+		hitNetTextureIdRed = DEFAULT_HIT_NET_RED,
 		hitNetBillboardPx = 110,
-		sandCoverImageId = DEFAULT_SAND_COVER,
+		sandCoverImageId = "rbxassetid://100619205187721",
 		scrollWaterBackground = true,
 	},
 }
@@ -146,5 +152,7 @@ function MatchSplashConfig.getSplashFrameIds(mapId: string?): { string }?
 	end
 	return nil
 end
+
+MatchSplashConfig.DEFAULT_HIT_NET_RED = DEFAULT_HIT_NET_RED
 
 return MatchSplashConfig

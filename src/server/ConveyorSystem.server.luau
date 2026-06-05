@@ -116,6 +116,8 @@ local FLASH_DEBOUNCE_ATTRIBUTE = "ConveyorHitFlashActive"
 local FLASH_BLINK_COUNT = 1
 local FLASH_ON_TIME = 0.12
 local FLASH_OFF_TIME = 0.04
+-- Red hit-net PNG stays on longer than the part/decal flash tint.
+local FISH_NET_RED_PULSE_SEC = 0.16
 -- Fish net uses BillboardGui; keep it longer than the red flash so it reads clearly.
 local FISH_NET_VISIBLE_SEC = 0.45
 -- Player harpoon kill: reel catch to muzzle this long before payout.
@@ -801,8 +803,7 @@ local function getModelBoundingBoxForNetVfx(model: Model): (boolean, CFrame, Vec
 	return true, CFrame.new(center), size
 end
 
-local function resolveNetTextureId(): string?
-	local id = MatchSplashConfig.getForActiveMap().hitNetTextureId or WATER_SPLASH_NET_TEXTURE_ID
+local function normalizeRbxAssetId(id: string?): string?
 	if not id or id == "" then
 		return nil
 	end
@@ -810,6 +811,30 @@ local function resolveNetTextureId(): string?
 		return id
 	end
 	return "rbxassetid://" .. id
+end
+
+local function resolveNetTextureId(): string?
+	local id = MatchSplashConfig.getForActiveMap().hitNetTextureId or WATER_SPLASH_NET_TEXTURE_ID
+	return normalizeRbxAssetId(id)
+end
+
+local function resolveNetTextureIdRed(): string?
+	local visual = MatchSplashConfig.getForActiveMap()
+	local id = visual.hitNetTextureIdRed or MatchSplashConfig.DEFAULT_HIT_NET_RED
+	return normalizeRbxAssetId(id)
+end
+
+local function findHitNetImageLabel(model: Model): ImageLabel?
+	local folder = model:FindFirstChild(HIT_FISH_NET_FOLDER_NAME)
+	if not folder then
+		return nil
+	end
+	for _, descendant in folder:GetDescendants() do
+		if descendant:IsA("ImageLabel") and descendant.Name == "NetImage" then
+			return descendant
+		end
+	end
+	return nil
 end
 
 local function modelHasVisibleHitFlashParts(model: Model): boolean
@@ -949,7 +974,7 @@ local function attachSplashFishNetHitFx(model: Model)
 	end
 end
 
-local function flashModelRed(model: Model, persistFishNet: boolean?)
+local function flashModelRed(model: Model, persistFishNet: boolean?, pulseRedNetImage: boolean?)
 	if model:GetAttribute(FLASH_DEBOUNCE_ATTRIBUTE) then
 		debugLog("Skipped flash (debounced)", model:GetFullName())
 		return
@@ -1001,6 +1026,20 @@ local function flashModelRed(model: Model, persistFishNet: boolean?)
 	end
 
 	attachSplashFishNetHitFx(model)
+
+	if pulseRedNetImage and not persistFishNet then
+		local img = findHitNetImageLabel(model)
+		local redId = resolveNetTextureIdRed()
+		local normalId = resolveNetTextureId()
+		if img and redId and normalId then
+			img.Image = redId
+			task.delay(FISH_NET_RED_PULSE_SEC, function()
+				if img.Parent and model.Parent then
+					img.Image = normalId
+				end
+			end)
+		end
+	end
 
 	if not persistFishNet then
 		task.delay(FISH_NET_VISIBLE_SEC, function()
@@ -1192,7 +1231,9 @@ local function onConveyorAntiAirHit(model: Model, attackerPlayer: Player?, proje
 
 	local reelOpts = applyRandomHitDamage(model, turretModel, rewardPlayer, attackerPlayer, projectilePart)
 	if model.Parent then
-		flashModelRed(model, reelOpts ~= nil)
+		local hp = model:GetAttribute(CONVEYOR_HEALTH_ATTRIBUTE)
+		local isNonKill = typeof(hp) == "number" and hp > 0
+		flashModelRed(model, reelOpts ~= nil, isNonKill)
 	end
 	return reelOpts
 end
@@ -1721,7 +1762,7 @@ hitFlashVfxRemote.OnServerEvent:Connect(function(player, hitInstance)
 
 	if hitModel.Parent then
 		debugLog("Vfx flash only", hitModel:GetFullName())
-		flashModelRed(hitModel, false)
+		flashModelRed(hitModel, false, true)
 	end
 end)
 

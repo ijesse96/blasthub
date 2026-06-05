@@ -3,7 +3,7 @@
 
 local KING_PLACE_ID = 82834864756259
 local LOG = "[JungleSplashTargetSpawner]"
-local SCRIPT_VERSION = 6
+local SCRIPT_VERSION = 8
 
 print(LOG, "v" .. SCRIPT_VERSION, "loaded PlaceId=" .. tostring(game.PlaceId))
 
@@ -31,6 +31,7 @@ local SplashArenaInterior = require(shared:WaitForChild("SplashArenaInterior"))
 local kingSplash = MatchSplashConfig.getForMapId("king_of_the_jungle")
 local JUNGLE_SPLASH_IMAGE = kingSplash.imageId or "rbxassetid://110419001189017"
 local BILLBOARD_STUDS = kingSplash.billboardStuds or 14
+local FISH_BILLBOARD_SCALE = kingSplash.fishBillboardScale or 0.45
 local BILLBOARD_BASE_PX = math.floor(BILLBOARD_STUDS * 10)
 
 local SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME = "SplashKillFishPreload"
@@ -38,8 +39,8 @@ local SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME = "SplashKillFishPreload"
 local TEMPLATE_NAME = "JungleBillboardSplash"
 local TEMPLATE_HOLDER_NAME = "JungleSplashTemplate"
 local ACTIVE_FOLDER_NAME = "WaterSplashes"
-local MAX_ACTIVE_SPLASHES = 12
-local SPAWN_INTERVAL = 0.5
+local MAX_ACTIVE_SPLASHES = 8
+local SPAWN_INTERVAL = 0.65
 local SPAWN_MARGIN = 6
 local MIN_SPACING_STUDS = 10
 local MAX_SPAWN_ATTEMPTS = 12
@@ -134,7 +135,7 @@ local function buildBillboardSplashTemplate(): Model
 	fishImage.BackgroundTransparency = 1
 	fishImage.AnchorPoint = Vector2.new(0.5, 0.5)
 	fishImage.Position = UDim2.fromScale(0.5, 0.5)
-	fishImage.Size = UDim2.fromScale(0.45, 0.45)
+	fishImage.Size = UDim2.fromScale(FISH_BILLBOARD_SCALE, FISH_BILLBOARD_SCALE)
 	fishImage.Image = SplashKillFishFrames.FALLBACK_IMAGE_ID
 	fishImage.ScaleType = Enum.ScaleType.Fit
 	fishImage.ZIndex = 1

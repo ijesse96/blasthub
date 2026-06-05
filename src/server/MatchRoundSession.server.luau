@@ -24,6 +24,8 @@ local REMOTES_FOLDER_NAME = "MatchRoundRemotes"
 local STATE_EVENT_NAME = "RoundState"
 local CONTINUE_PROMPT_EVENT_NAME = "ContinuePrompt"
 local CONTINUE_RESPONSE_EVENT_NAME = "ContinueResponse"
+local RETURN_TO_LOBBY_EVENT_NAME = "RequestReturnToLobby"
+local RETURN_TO_LOBBY_COOLDOWN_SECONDS = 2.5
 
 type TeleportData = {
 	kind: string?,
@@ -47,6 +49,7 @@ local coinsWonByUserId: { [number]: number } = {}
 local coinsSpentByUserId: { [number]: number } = {}
 -- Continue fee debited but next ActiveRound not started yet (refund on disconnect in this window).
 local chargedAwaitingRoundStartByUserId: { [number]: number } = {}
+local returnToLobbyCooldownByUserId: { [number]: number } = {}
 
 type LeaderboardRow = {
 	userId: number,
@@ -90,6 +93,7 @@ end
 local stateEvent = ensureRemoteEvent(STATE_EVENT_NAME)
 local continuePromptEvent = ensureRemoteEvent(CONTINUE_PROMPT_EVENT_NAME)
 local continueResponseEvent = ensureRemoteEvent(CONTINUE_RESPONSE_EVENT_NAME)
+local returnToLobbyEvent = ensureRemoteEvent(RETURN_TO_LOBBY_EVENT_NAME)
 
 local function parseTeleportData(player: Player): TeleportData
 	local joinData = player:GetJoinData()
@@ -161,6 +165,61 @@ local function teleportPlayersToLobby(playersList: { Player })
 	if not ok then
 		warn(string.format("[MatchRoundSession] teleport to lobby failed: %s", tostring(err)))
 	end
+end
+
+local function isPlayerInSession(userId: number): boolean
+	return pendingParticipants[userId] == true
+		or activeRoundParticipants[userId] == true
+		or skipOneContinueForUserId[userId] == true
+		or midRoundSpectatorContinueByUserId[userId] == true
+		or continueEligibleByUserId[userId] == true
+		or chargedAwaitingRoundStartByUserId[userId] ~= nil
+end
+
+local function removePlayerFromSession(userId: number)
+	local refundFee = chargedAwaitingRoundStartByUserId[userId]
+	if typeof(refundFee) == "number" and refundFee > 0 then
+		chargedAwaitingRoundStartByUserId[userId] = nil
+		task.spawn(function()
+			Money.refundEntryFeeAsync(userId, refundFee)
+		end)
+	end
+	pendingParticipants[userId] = nil
+	activeRoundParticipants[userId] = nil
+	skipOneContinueForUserId[userId] = nil
+	midRoundSpectatorContinueByUserId[userId] = nil
+	continueChoiceByUserId[userId] = nil
+	continueEligibleByUserId[userId] = nil
+	coinsWonByUserId[userId] = nil
+	coinsSpentByUserId[userId] = nil
+end
+
+local function canReturnToLobbyNow(player: Player): boolean
+	local now = os.clock()
+	local last = returnToLobbyCooldownByUserId[player.UserId]
+	if last and now - last < RETURN_TO_LOBBY_COOLDOWN_SECONDS then
+		return false
+	end
+	returnToLobbyCooldownByUserId[player.UserId] = now
+	return true
+end
+
+local function attemptReturnToLobby(player: Player)
+	if not player or not player:IsDescendantOf(Players) then
+		return
+	end
+	if phase == "Idle" then
+		return
+	end
+	if not isPlayerInSession(player.UserId) then
+		return
+	end
+	if not canReturnToLobbyNow(player) then
+		return
+	end
+
+	removePlayerFromSession(player.UserId)
+	teleportPlayersToLobby({ player })
 end
 
 local function countSet(setMap: { [number]: true }): number
@@ -485,6 +544,10 @@ continueResponseEvent.OnServerEvent:Connect(function(player: Player, wantsContin
 	continueChoiceByUserId[player.UserId] = wantsContinue == true
 end)
 
+returnToLobbyEvent.OnServerEvent:Connect(function(player: Player)
+	attemptReturnToLobby(player)
+end)
+
 Players.PlayerAdded:Connect(function(player: Player)
 	local isMatch, mapId = isMatchJoin(player)
 	if isMatch and mapId then
@@ -545,20 +608,8 @@ MatchRoundBridge.setCallbacks({
 })
 
 Players.PlayerRemoving:Connect(function(player: Player)
-	local userId = player.UserId
-	local refundFee = chargedAwaitingRoundStartByUserId[userId]
-	if typeof(refundFee) == "number" and refundFee > 0 then
-		chargedAwaitingRoundStartByUserId[userId] = nil
-		task.spawn(function()
-			Money.refundEntryFeeAsync(userId, refundFee)
-		end)
-	end
-	pendingParticipants[userId] = nil
-	activeRoundParticipants[userId] = nil
-	skipOneContinueForUserId[userId] = nil
-	midRoundSpectatorContinueByUserId[userId] = nil
-	continueChoiceByUserId[userId] = nil
-	continueEligibleByUserId[userId] = nil
+	removePlayerFromSession(player.UserId)
+	returnToLobbyCooldownByUserId[player.UserId] = nil
 end)
 
 task.spawn(function()

@@ -98,6 +98,7 @@ local LobbyUiConfig = {
 	MAP_TILE_PADDING = 12,
 	MAP_SELECT_OVERLAY_INSET = 48,
 	MAP_SELECT_TITLE = "Choose a map",
+	MAP_SELECT_JOINING_TEXT = "Joining…",
 	COLLECTION_SELECT_TITLE = "Choose collection",
 	COLLECTION_MAP_SELECT_EMPTY = "Play a match to start collecting!",
 	MAP_TILE_STROKE = Color3.fromRGB(80, 220, 255),

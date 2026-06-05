@@ -66,19 +66,12 @@ local CASH_POP_FADE_START_ALPHA = 0.42
 local CASH_POP_STROKE = Color3.fromRGB(14, 72, 36)
 local JOIN_WARMUP_BATCH_PAUSE_EVERY = 2
 local PREPARE_LOAD_TIMEOUT_SEC = 10
-local WAVE_WIPE_IMAGE_ID = "rbxassetid://93697217392256"
-local SAND_COVER_IMAGE_ID = "rbxassetid://122141499309246"
+local SAND_COVER_IMAGE_ID = "rbxassetid://100619205187721"
 local WAVE_WIPE_DURATION_SEC = 2.5
-local REVEAL_PAUSE_BEFORE_WIPE_SEC = 1
-local WAVE_WIPE_WIDTH_SCALE = 2.2
-local WAVE_WIPE_HEIGHT_SCALE = 2.0
--- Lower starting Y so more wave is visible on panel during the pre-wipe pause.
-local WAVE_WIPE_START_Y_SCALE = 0.15
-local WAVE_WIPE_END_Y_SCALE = 1.55
-local WAVE_DRIFT_X_START_SCALE = 0.34
-local WAVE_DRIFT_X_END_SCALE = 0.66
--- One left-right leg of the ping-pong drift (repeats until reveal ends).
-local WAVE_DRIFT_LEG_DURATION_SEC = 0.5
+local REVEAL_PAUSE_BEFORE_WIPE_SEC = 0.35
+local SAND_WIPE_START_Y_SCALE = 0
+local SAND_WIPE_END_Y_SCALE = 1.05
+local SAND_COVER_HEIGHT_SCALE = 1.04
 local PANEL_CORNER_RADIUS = UDim.new(0, 6)
 
 -- Built at center during reel (gui disabled); revealed after retract.
@@ -244,66 +237,27 @@ local function playWaveWipeInsidePanel(fishImage: ImageLabel, panel: Frame): ()
 	revealClip.ZIndex = 3
 	revealClip.Parent = panel
 
-	-- Sand + wave share one parent so they move at identical speed (same tween as the old wave sweep).
-	local revealGroup = Instance.new("Frame")
-	revealGroup.Name = "RevealGroup"
-	revealGroup.BackgroundTransparency = 1
-	revealGroup.BorderSizePixel = 0
-	revealGroup.AnchorPoint = Vector2.new(0.5, 0)
-	revealGroup.Position = UDim2.fromScale(0.5, WAVE_WIPE_START_Y_SCALE)
-	revealGroup.Size = UDim2.fromOffset(IMAGE_PX, IMAGE_PX)
-	revealGroup.ZIndex = 1
-	revealGroup.Parent = revealClip
-
 	local sand = Instance.new("ImageLabel")
 	sand.Name = "SandCover"
 	sand.BackgroundTransparency = 1
 	sand.BorderSizePixel = 0
 	sand.Image = SAND_COVER_IMAGE_ID
-	sand.ScaleType = Enum.ScaleType.Crop
+	sand.ScaleType = Enum.ScaleType.Stretch
 	sand.AnchorPoint = Vector2.new(0.5, 0)
-	sand.Position = UDim2.fromScale(0.5, 0)
-	sand.Size = UDim2.fromOffset(IMAGE_PX, IMAGE_PX)
+	sand.Position = UDim2.fromScale(0.5, SAND_WIPE_START_Y_SCALE)
+	sand.Size = UDim2.fromScale(1, SAND_COVER_HEIGHT_SCALE)
 	sand.ZIndex = 1
-	sand.Parent = revealGroup
-
-	local wave = Instance.new("ImageLabel")
-	wave.Name = "Wave"
-	wave.BackgroundTransparency = 1
-	wave.BorderSizePixel = 0
-	wave.Image = WAVE_WIPE_IMAGE_ID
-	wave.ScaleType = Enum.ScaleType.Fit
-	wave.AnchorPoint = Vector2.new(0.5, 0.5)
-	wave.Size = UDim2.fromOffset(
-		math.ceil(IMAGE_PX * WAVE_WIPE_WIDTH_SCALE),
-		math.ceil(IMAGE_PX * WAVE_WIPE_HEIGHT_SCALE)
-	)
-	wave.Position = UDim2.fromScale(WAVE_DRIFT_X_START_SCALE, 0)
-	wave.ZIndex = 2
-	wave.Parent = revealGroup
+	sand.Parent = revealClip
 
 	waitForImageLabelLoaded(sand, PREPARE_LOAD_TIMEOUT_SEC)
-	waitForImageLabelLoaded(wave, PREPARE_LOAD_TIMEOUT_SEC)
 	waitFrames(1)
 
 	fishImage.ImageTransparency = 0
 
-	local driftLegInfo = TweenInfo.new(
-		WAVE_DRIFT_LEG_DURATION_SEC,
-		Enum.EasingStyle.Linear,
-		Enum.EasingDirection.InOut,
-		-1,
-		true
-	)
-	local driftTween = TweenService:Create(wave, driftLegInfo, {
-		Position = UDim2.fromScale(WAVE_DRIFT_X_END_SCALE, 0),
-	})
-	driftTween:Play()
-
 	task.wait(REVEAL_PAUSE_BEFORE_WIPE_SEC)
 
 	local moveInfo = TweenInfo.new(WAVE_WIPE_DURATION_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-	local moveTween = TweenService:Create(revealGroup, moveInfo, { Position = UDim2.fromScale(0.5, WAVE_WIPE_END_Y_SCALE) })
+	local moveTween = TweenService:Create(sand, moveInfo, { Position = UDim2.fromScale(0.5, SAND_WIPE_END_Y_SCALE) })
 	moveTween:Play()
 	moveTween.Completed:Wait()
 
@@ -512,7 +466,7 @@ end
 local function prepareCatch(imageId: string, amount: number)
 	warmImageIdInPoolAsync(imageId)
 	pcall(function()
-		ContentProvider:PreloadAsync({ imageId, WAVE_WIPE_IMAGE_ID, SAND_COVER_IMAGE_ID })
+		ContentProvider:PreloadAsync({ imageId, SAND_COVER_IMAGE_ID })
 	end)
 	preparedAmountByImageId[imageId] = amount
 end
@@ -607,7 +561,7 @@ local function startJoinWarmup()
 			ContentProvider:PreloadAsync(ids)
 		end)
 		pcall(function()
-			ContentProvider:PreloadAsync({ WAVE_WIPE_IMAGE_ID, SAND_COVER_IMAGE_ID })
+			ContentProvider:PreloadAsync({ SAND_COVER_IMAGE_ID })
 		end)
 		for index, id in ids do
 			warmImageIdInPoolAsync(id)

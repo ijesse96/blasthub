@@ -806,7 +806,106 @@ mapGridLayout.FillDirectionMaxCells = LobbyUiConfig.MAP_SELECT_COLUMNS
 mapGridLayout.SortOrder = Enum.SortOrder.LayoutOrder
 mapGridLayout.Parent = mapGrid
 
+local mapJoinLoadingOverlay = Instance.new("Frame")
+mapJoinLoadingOverlay.Name = "JoinLoading"
+mapJoinLoadingOverlay.Size = UDim2.fromScale(1, 1)
+mapJoinLoadingOverlay.BackgroundColor3 = Color3.fromRGB(10, 14, 20)
+mapJoinLoadingOverlay.BackgroundTransparency = 0.25
+mapJoinLoadingOverlay.Visible = false
+mapJoinLoadingOverlay.Active = true
+mapJoinLoadingOverlay.ZIndex = LobbyUiConfig.Z_MAP_SELECT + 10
+mapJoinLoadingOverlay.Parent = mapSelectContent
+
+local mapJoinLoadingCard = Instance.new("Frame")
+mapJoinLoadingCard.Name = "Card"
+mapJoinLoadingCard.AnchorPoint = Vector2.new(0.5, 0.5)
+mapJoinLoadingCard.Position = UDim2.fromScale(0.5, 0.5)
+mapJoinLoadingCard.Size = UDim2.fromOffset(260, 120)
+mapJoinLoadingCard.BackgroundColor3 = LobbyUiConfig.MAP_SELECT_CONTENT_COLOR
+mapJoinLoadingCard.ZIndex = LobbyUiConfig.Z_MAP_SELECT + 11
+mapJoinLoadingCard.Parent = mapJoinLoadingOverlay
+addCorner(mapJoinLoadingCard, 12)
+addStroke(mapJoinLoadingCard, LobbyUiConfig.SUB_PANEL_STROKE, 2, 0.2)
+
+local mapJoinSpinnerHolder = Instance.new("Frame")
+mapJoinSpinnerHolder.Name = "Spinner"
+mapJoinSpinnerHolder.AnchorPoint = Vector2.new(0.5, 0)
+mapJoinSpinnerHolder.Position = UDim2.new(0.5, 0, 0, 20)
+mapJoinSpinnerHolder.Size = UDim2.fromOffset(36, 36)
+mapJoinSpinnerHolder.BackgroundColor3 = LobbyUiConfig.MAP_SELECT_HEADER_COLOR
+mapJoinSpinnerHolder.ZIndex = LobbyUiConfig.Z_MAP_SELECT + 12
+mapJoinSpinnerHolder.Parent = mapJoinLoadingCard
+addCorner(mapJoinSpinnerHolder, 18)
+
+local mapJoinSpinnerAccent = Instance.new("Frame")
+mapJoinSpinnerAccent.Name = "Accent"
+mapJoinSpinnerAccent.AnchorPoint = Vector2.new(0.5, 0)
+mapJoinSpinnerAccent.Position = UDim2.new(0.5, 0, 0, 2)
+mapJoinSpinnerAccent.Size = UDim2.fromOffset(6, 14)
+mapJoinSpinnerAccent.BackgroundColor3 = LobbyUiConfig.MAP_TILE_STROKE
+mapJoinSpinnerAccent.BorderSizePixel = 0
+mapJoinSpinnerAccent.ZIndex = LobbyUiConfig.Z_MAP_SELECT + 13
+mapJoinSpinnerAccent.Parent = mapJoinSpinnerHolder
+addCorner(mapJoinSpinnerAccent, 3)
+
+local mapJoinLoadingLabel = Instance.new("TextLabel")
+mapJoinLoadingLabel.Name = "Label"
+mapJoinLoadingLabel.AnchorPoint = Vector2.new(0.5, 1)
+mapJoinLoadingLabel.Position = UDim2.new(0.5, 0, 1, -20)
+mapJoinLoadingLabel.Size = UDim2.new(1, -24, 0, 28)
+mapJoinLoadingLabel.BackgroundTransparency = 1
+mapJoinLoadingLabel.Font = Enum.Font.GothamBold
+mapJoinLoadingLabel.TextSize = 18
+mapJoinLoadingLabel.TextColor3 = LobbyUiConfig.SUB_TITLE_TEXT
+mapJoinLoadingLabel.Text = LobbyUiConfig.MAP_SELECT_JOINING_TEXT
+mapJoinLoadingLabel.TextWrapped = true
+mapJoinLoadingLabel.ZIndex = LobbyUiConfig.Z_MAP_SELECT + 12
+mapJoinLoadingLabel.Parent = mapJoinLoadingCard
+
 local wheelSpinTween: Tween? = nil
+local mapJoinSpinTween: Tween? = nil
+local mapJoinLoadingActive = false
+
+local function startMapJoinSpinner()
+	if mapJoinSpinTween then
+		mapJoinSpinTween:Cancel()
+	end
+	mapJoinSpinnerHolder.Rotation = 0
+	mapJoinSpinTween = TweenService:Create(
+		mapJoinSpinnerHolder,
+		TweenInfo.new(0.9, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1),
+		{ Rotation = 360 }
+	)
+	mapJoinSpinTween:Play()
+end
+
+local function stopMapJoinSpinner()
+	if mapJoinSpinTween then
+		mapJoinSpinTween:Cancel()
+		mapJoinSpinTween = nil
+	end
+	mapJoinSpinnerHolder.Rotation = 0
+end
+
+local function setMapJoinLoading(active: boolean, mapDisplayName: string?, statusText: string?)
+	mapJoinLoadingActive = active
+	mapJoinLoadingOverlay.Visible = active
+	mapSelectClose.Active = not active
+
+	if active then
+		if statusText and statusText ~= "" then
+			mapJoinLoadingLabel.Text = statusText
+		elseif mapDisplayName and mapDisplayName ~= "" then
+			mapJoinLoadingLabel.Text = string.format("Joining %s…", mapDisplayName)
+		else
+			mapJoinLoadingLabel.Text = LobbyUiConfig.MAP_SELECT_JOINING_TEXT
+		end
+		startMapJoinSpinner()
+	else
+		stopMapJoinSpinner()
+		mapJoinLoadingLabel.Text = LobbyUiConfig.MAP_SELECT_JOINING_TEXT
+	end
+end
 
 local function setStatus(text: string?, visible: boolean?)
 	if text and text ~= "" then
@@ -830,6 +929,8 @@ local function hideAllSubHosts()
 end
 
 local function closeMapSelect()
+	setMapJoinLoading(false)
+	joiningMapId = nil
 	activeMapSelect = false
 	mapSelectOverlay.Visible = false
 	syncHubDisplayOrder()
@@ -1131,11 +1232,11 @@ local function buildMapTiles()
 				end
 				local joinRemote = requestJoinMap
 				if not joinRemote then
-					setStatus("Connecting…", true)
+					setMapJoinLoading(true, nil, "Connecting…")
 					return
 				end
 				joiningMapId = map.id
-				setStatus("Joining…", true)
+				setMapJoinLoading(true, map.displayName)
 				joinRemote:FireServer(map.id)
 			end)
 		end
@@ -1150,6 +1251,8 @@ local function openMapSelect()
 	subPanel.Visible = false
 	hideAllSubHosts()
 	setStatus(nil, false)
+	setMapJoinLoading(false)
+	joiningMapId = nil
 	buildMapTiles()
 	activeMapSelect = true
 	mapSelectOverlay.Visible = true
@@ -1214,8 +1317,16 @@ collectionButton.MouseButton1Click:Connect(function()
 end)
 
 subClose.MouseButton1Click:Connect(closeSubPanel)
-mapSelectClose.MouseButton1Click:Connect(closeSubPanel)
-mapSelectScrim.MouseButton1Click:Connect(closeSubPanel)
+
+local function handleMapSelectClose()
+	if mapJoinLoadingActive then
+		return
+	end
+	closeSubPanel()
+end
+
+mapSelectClose.MouseButton1Click:Connect(handleMapSelectClose)
+mapSelectScrim.MouseButton1Click:Connect(handleMapSelectClose)
 
 spinButton.MouseButton1Click:Connect(function()
 	if spinBusy then
@@ -1268,6 +1379,7 @@ end
 
 local function onJoinResult(payload: unknown)
 	joiningMapId = nil
+	setMapJoinLoading(false)
 	if typeof(payload) ~= "table" then
 		setStatus(nil, false)
 		return
@@ -1311,6 +1423,7 @@ local function bindRemotes()
 
 	if requestJoinMap and requestCoinPurchase and requestDailySpin then
 		setStatus(nil, false)
+		setMapJoinLoading(false)
 	end
 end
 
