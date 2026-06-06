@@ -12,6 +12,15 @@ local IMAGE_ID_ATTRIBUTE = "SplashKillFishImageId"
 local RARITY_ATTRIBUTE = "SplashKillFishRarity"
 -- Deprecated: atlas frame index; kept for old models, ignored by client VFX.
 local FRAME_INDEX_ATTRIBUTE = "SplashKillFishFrameIndex"
+local TARGET_KIND_ATTRIBUTE = "SplashTargetKind"
+local SWIM_YAW_ATTRIBUTE = "SplashSwimYaw"
+local TARGET_KIND_WATER = "water"
+local TARGET_KIND_SHARK = "shark"
+local TARGET_KIND_BOAT = "boat"
+local TARGET_SIZE_TIER_ATTRIBUTE = "SplashTargetSizeTier"
+local TARGET_SIZE_COMMON = "common"
+local TARGET_SIZE_RARE = "rare"
+local TARGET_SIZE_LEGENDARY = "legendary"
 
 local DEFAULT_TIER: FishTier = "common"
 
@@ -61,6 +70,46 @@ local function pickGameplayFish(mapId: string?): (string, FishTier)
 	return imageId, tier
 end
 
+local function pickCommonSplashFish(mapId: string?): (string, FishTier)
+	local resolvedMapId = mapId or getActiveMapId()
+	local imageId = pickFromList(SplashFishCatalog.getCommonSpawnableIdsForMap(resolvedMapId))
+	local tier = inferTierForImageId(imageId, mapId)
+	return imageId, tier
+end
+
+local function pickRareTargetFish(mapId: string?): (string, FishTier)
+	local resolvedMapId = mapId or getActiveMapId()
+	local ids = SplashFishCatalog.getRarePlusSpawnableIdsForMap(resolvedMapId)
+	if #ids == 0 then
+		return pickCommonSplashFish(mapId)
+	end
+	local imageId = pickFromList(ids)
+	local tier = inferTierForImageId(imageId, mapId)
+	return imageId, tier
+end
+
+local function pickRareSplashFish(mapId: string?): (string, FishTier)
+	local resolvedMapId = mapId or getActiveMapId()
+	local ids = SplashFishCatalog.getRareSpawnableIdsForMap(resolvedMapId)
+	if #ids == 0 then
+		return pickCommonSplashFish(mapId)
+	end
+	local imageId = pickFromList(ids)
+	local tier = inferTierForImageId(imageId, mapId)
+	return imageId, tier
+end
+
+local function pickLegendarySplashFish(mapId: string?): (string, FishTier)
+	local resolvedMapId = mapId or getActiveMapId()
+	local ids = SplashFishCatalog.getLegendarySpawnableIdsForMap(resolvedMapId)
+	if #ids == 0 then
+		return pickRareSplashFish(mapId)
+	end
+	local imageId = pickFromList(ids)
+	local tier = inferTierForImageId(imageId, mapId)
+	return imageId, tier
+end
+
 local function pickImageId(tier: FishTier?): string
 	local mapId = getActiveMapId()
 	local resolvedTier = tier or DEFAULT_TIER
@@ -83,12 +132,25 @@ return {
 	IMAGE_ID_ATTRIBUTE = IMAGE_ID_ATTRIBUTE,
 	RARITY_ATTRIBUTE = RARITY_ATTRIBUTE,
 	FRAME_INDEX_ATTRIBUTE = FRAME_INDEX_ATTRIBUTE,
+	TARGET_KIND_ATTRIBUTE = TARGET_KIND_ATTRIBUTE,
+	SWIM_YAW_ATTRIBUTE = SWIM_YAW_ATTRIBUTE,
+	TARGET_KIND_WATER = TARGET_KIND_WATER,
+	TARGET_KIND_SHARK = TARGET_KIND_SHARK,
+	TARGET_KIND_BOAT = TARGET_KIND_BOAT,
+	TARGET_SIZE_TIER_ATTRIBUTE = TARGET_SIZE_TIER_ATTRIBUTE,
+	TARGET_SIZE_COMMON = TARGET_SIZE_COMMON,
+	TARGET_SIZE_RARE = TARGET_SIZE_RARE,
+	TARGET_SIZE_LEGENDARY = TARGET_SIZE_LEGENDARY,
 	DEFAULT_TIER = DEFAULT_TIER,
 	getActiveMapId = getActiveMapId,
 	getFrameIds = getFrameIds,
 	inferTierForImageId = inferTierForImageId,
 	pickGameplayImageId = pickGameplayImageId,
 	pickGameplayFish = pickGameplayFish,
+	pickCommonSplashFish = pickCommonSplashFish,
+	pickRareTargetFish = pickRareTargetFish,
+	pickRareSplashFish = pickRareSplashFish,
+	pickLegendarySplashFish = pickLegendarySplashFish,
 	pickImageId = pickImageId,
 	getFrameCount = getFrameCount,
 	applyFullImageToLabel = applyFullImageToLabel,

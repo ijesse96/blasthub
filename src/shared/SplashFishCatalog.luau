@@ -315,6 +315,32 @@ function SplashFishCatalog.getSpawnableIdsForMap(mapId: string): { string }
 	return out
 end
 
+function SplashFishCatalog.getCommonSpawnableIdsForMap(mapId: string): { string }
+	return SplashFishCatalog.getIdsForTier(mapId, "common")
+end
+
+function SplashFishCatalog.getRareSpawnableIdsForMap(mapId: string): { string }
+	return SplashFishCatalog.getIdsForTier(mapId, "rare")
+end
+
+function SplashFishCatalog.getLegendarySpawnableIdsForMap(mapId: string): { string }
+	return SplashFishCatalog.getIdsForTier(mapId, "legendary")
+end
+
+function SplashFishCatalog.getRarePlusSpawnableIdsForMap(mapId: string): { string }
+	local mapTiers = catalog[mapId]
+	if not mapTiers then
+		return {}
+	end
+	local out: { string } = {}
+	for _, tier in { "rare", "legendary", "jackpot" } :: { FishTier } do
+		for _, id in mapTiers[tier] do
+			table.insert(out, id)
+		end
+	end
+	return out
+end
+
 function SplashFishCatalog.getTierForImageId(mapId: string, imageId: string): FishTier?
 	local mapTiers = catalog[mapId]
 	if not mapTiers then

@@ -848,6 +848,24 @@ local function modelHasVisibleHitFlashParts(model: Model): boolean
 	return false
 end
 
+local function resolveHitNetBillboardPx(model: Model, bboxSize: Vector3): number
+	local visual = MatchSplashConfig.getForActiveMap()
+	local overridePx = visual.hitNetBillboardPx
+	if typeof(overridePx) == "number" and overridePx > 0 then
+		return math.clamp(math.floor(overridePx), 80, 380)
+	end
+
+	local targetKind = model:GetAttribute(SplashKillFishFrames.TARGET_KIND_ATTRIBUTE)
+	if targetKind == SplashKillFishFrames.TARGET_KIND_SHARK or targetKind == SplashKillFishFrames.TARGET_KIND_BOAT then
+		-- Same net size on small and large sharks (ignore rare footprint).
+		local spreadStuds = MatchSplashConfig.getCommonTargetStuds(MatchSplashConfig.getActiveMapId())
+		return math.clamp(math.floor(spreadStuds * 10), 120, 380)
+	end
+
+	local spread = math.max(bboxSize.X, bboxSize.Y, bboxSize.Z)
+	return math.clamp(math.floor(spread * 10), 120, 380)
+end
+
 local function attachSplashFishNetHitFx(model: Model)
 	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
 	if not primary then
@@ -899,15 +917,7 @@ local function attachSplashFishNetHitFx(model: Model)
 		anchorWeld.Part1 = primary
 		anchorWeld.Parent = anchor
 
-		local visual = MatchSplashConfig.getForActiveMap()
-		local px: number
-		local overridePx = visual.hitNetBillboardPx
-		if typeof(overridePx) == "number" and overridePx > 0 then
-			px = math.clamp(math.floor(overridePx), 80, 380)
-		else
-			local spread = math.max(size.X, size.Y, size.Z)
-			px = math.clamp(math.floor(spread * 10), 120, 380)
-		end
+		local px = resolveHitNetBillboardPx(model, size)
 
 		local bb = Instance.new("BillboardGui")
 		bb.Name = "HitFishNetBillboard"
