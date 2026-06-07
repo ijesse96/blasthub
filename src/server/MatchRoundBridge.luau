@@ -13,6 +13,9 @@ local callbacks = {
 	end,
 }
 
+local activeRoundStartedListeners: { () -> () } = {}
+local roundEndedListeners: { () -> () } = {}
+
 local M = {}
 
 function M.setCallbacks(nextCallbacks: {
@@ -36,6 +39,26 @@ function M.setCallbacks(nextCallbacks: {
 	end
 	if nextCallbacks.clearFishNow then
 		callbacks.clearFishNow = nextCallbacks.clearFishNow
+	end
+end
+
+function M.onActiveRoundStarted(callback: () -> ())
+	table.insert(activeRoundStartedListeners, callback)
+end
+
+function M.onRoundEnded(callback: () -> ())
+	table.insert(roundEndedListeners, callback)
+end
+
+function M.fireActiveRoundStarted()
+	for _, callback in activeRoundStartedListeners do
+		task.spawn(callback)
+	end
+end
+
+function M.fireRoundEnded()
+	for _, callback in roundEndedListeners do
+		task.spawn(callback)
 	end
 end
 

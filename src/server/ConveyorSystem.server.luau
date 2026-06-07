@@ -394,6 +394,27 @@ local function finishSplashKillAtTurret(rewardPlayer: Player?, model: Model, pay
 	end
 end
 
+local function isMonsterSplashTarget(model: Model): boolean
+	return model:GetAttribute(SplashKillFishFrames.TARGET_KIND_ATTRIBUTE) == SplashKillFishFrames.TARGET_KIND_MONSTER
+end
+
+local function beginMonsterSubmerge(model: Model)
+	model:SetAttribute(SplashKillFishFrames.MONSTER_PHASE_ATTRIBUTE, SplashKillFishFrames.MONSTER_PHASE_SUBMERGE)
+	local hit = model:FindFirstChild(SPLASH_HIT_COLLIDER_NAME)
+	if hit and hit:IsA("BasePart") then
+		hit.CanQuery = false
+	end
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.CanQuery = false
+		end
+	end
+end
+
+local function getMonsterSubmergeDurationSec(): number
+	return MatchSplashConfig.getJackpotTargetSubmergeDurationSec(MatchSplashConfig.getActiveMapId())
+end
+
 local function getConveyorItemsFolder(): Folder?
 	local folder = ServerStorage:FindFirstChild(CONVEYOR_ITEMS_FOLDER)
 	if folder and folder:IsA("Folder") then
@@ -856,8 +877,20 @@ local function resolveHitNetBillboardPx(model: Model, bboxSize: Vector3): number
 	end
 
 	local targetKind = model:GetAttribute(SplashKillFishFrames.TARGET_KIND_ATTRIBUTE)
-	if targetKind == SplashKillFishFrames.TARGET_KIND_SHARK or targetKind == SplashKillFishFrames.TARGET_KIND_BOAT then
-		-- Same net size on small and large sharks (ignore rare footprint).
+	if targetKind == SplashKillFishFrames.TARGET_KIND_SHARK then
+		local mapId = MatchSplashConfig.getActiveMapId()
+		local spreadStuds = MatchSplashConfig.getCommonTargetStuds(mapId)
+		local sizeTier = model:GetAttribute(SplashKillFishFrames.TARGET_SIZE_TIER_ATTRIBUTE)
+		if sizeTier == SplashKillFishFrames.TARGET_SIZE_COMMON then
+			return math.clamp(math.floor(spreadStuds * 7), 80, 380)
+		end
+		return math.clamp(math.floor(spreadStuds * 10), 120, 380)
+	end
+	if targetKind == SplashKillFishFrames.TARGET_KIND_BOAT then
+		local spreadStuds = MatchSplashConfig.getCommonTargetStuds(MatchSplashConfig.getActiveMapId())
+		return math.clamp(math.floor(spreadStuds * 10), 120, 380)
+	end
+	if targetKind == SplashKillFishFrames.TARGET_KIND_MONSTER then
 		local spreadStuds = MatchSplashConfig.getCommonTargetStuds(MatchSplashConfig.getActiveMapId())
 		return math.clamp(math.floor(spreadStuds * 10), 120, 380)
 	end
@@ -1125,8 +1158,14 @@ local function applyRandomHitDamage(
 	end
 
 	local isWaterSplash = model:GetAttribute(IS_WATER_SPLASH_ATTRIBUTE) == true
+	local isMonster = isMonsterSplashTarget(model)
+	local monsterSubmergeSec = if isMonster then getMonsterSubmergeDurationSec() else 0
 
 	if newHealth <= 0 then
+		if isMonster then
+			beginMonsterSubmerge(model)
+		end
+
 		local payoutAttr = model:GetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE)
 		local payout = if typeof(payoutAttr) == "number" then payoutAttr else 0
 
@@ -1148,9 +1187,10 @@ local function applyRandomHitDamage(
 			local capturedReward = rewardPlayer
 			local capturedPayout = payout
 			local capturedModel = model
+			local reelDuration = HARPOON_REEL_KILL_DURATION_SEC + monsterSubmergeSec
 
 			return {
-				retractDuration = HARPOON_REEL_KILL_DURATION_SEC,
+				retractDuration = reelDuration,
 				retractFollowModel = model,
 				retractFollowOffset = CFrame.new(0, 1.25, -14),
 				deferSplashReelMeter = isWaterSplash and SplashReelConfig.TAP_TO_REEL_ENABLED,
@@ -1203,22 +1243,43 @@ local function applyRandomHitDamage(
 		model:SetAttribute(CONVEYOR_ITEM_ATTRIBUTE, nil)
 
 		if isWaterSplash and rewardPlayer and rewardPlayer.Parent then
-			model.Parent = getOrCreateDeathVfxFolder()
-			if turretModel and turretModel.Parent then
-				local capturedReward = rewardPlayer
-				local capturedModel = model
-				local capturedPayout = payout
-				floatConveyorModelTowardTurret(model, turretModel, function()
+			local capturedReward = rewardPlayer
+			local capturedModel = model
+			local capturedPayout = payout
+			local capturedTurret = turretModel
+
+			local function beginSplashKillFlow()
+				if not capturedModel.Parent then
+					return
+				end
+				capturedModel.Parent = getOrCreateDeathVfxFolder()
+				if capturedTurret and capturedTurret.Parent then
+					floatConveyorModelTowardTurret(capturedModel, capturedTurret, function()
+						finishSplashKillAtTurret(capturedReward, capturedModel, capturedPayout)
+					end)
+				else
 					finishSplashKillAtTurret(capturedReward, capturedModel, capturedPayout)
-				end)
+				end
+			end
+
+			if monsterSubmergeSec > 0 then
+				task.delay(monsterSubmergeSec, beginSplashKillFlow)
 			else
-				finishSplashKillAtTurret(rewardPlayer, model, payout)
+				beginSplashKillFlow()
 			end
 		elseif turretModel and turretModel.Parent then
 			model.Parent = getOrCreateDeathVfxFolder()
 			floatConveyorModelTowardTurret(model, turretModel)
 		else
-			model:Destroy()
+			if monsterSubmergeSec > 0 then
+				task.delay(monsterSubmergeSec, function()
+					if model.Parent then
+						model:Destroy()
+					end
+				end)
+			else
+				model:Destroy()
+			end
 		end
 	end
 

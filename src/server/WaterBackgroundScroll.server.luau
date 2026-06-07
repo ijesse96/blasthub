@@ -3,6 +3,7 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local MatchSplashConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MatchSplashConfig"))
+local SplashKillFishFrames = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashKillFishFrames"))
 
 local BASEPLATE_NAME = "Baseplate"
 local TEXTURE_NAME = "WaterBackground"
@@ -27,6 +28,9 @@ if not MatchSplashConfig.getForActiveMap().scrollWaterBackground then
 end
 
 RunService.Heartbeat:Connect(function(dt: number)
+	if Workspace:GetAttribute(SplashKillFishFrames.MONSTER_EVENT_ACTIVE_ATTRIBUTE) == true then
+		return
+	end
 	texture.OffsetStudsU += SPEED_U * dt
 	texture.OffsetStudsV += SPEED_V * dt
 end)

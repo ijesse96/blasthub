@@ -3,7 +3,7 @@
 
 local FISH_FRENZY_PLACE_ID = 130112747036452
 local LOG_PREFIX = "[WaterSplashSpawner]"
-local SCRIPT_VERSION = 4
+local SCRIPT_VERSION = 5
 
 print(LOG_PREFIX, "v" .. SCRIPT_VERSION, "loaded PlaceId=" .. tostring(game.PlaceId))
 
@@ -17,18 +17,20 @@ local ServerStorage = game:GetService("ServerStorage")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
-local BUILD_TAG = "fish-frenzy-shark-boat-v12"
+local BUILD_TAG = "fish-frenzy-shark-boat-monster-v14"
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local MatchSplashConfig = require(shared:WaitForChild("MatchSplashConfig"))
 local SplashKillFishFrames = require(shared:WaitForChild("SplashKillFishFrames"))
 local SplashSpawnExclusions = require(shared:WaitForChild("SplashSpawnExclusions"))
 local SplashArenaInterior = require(shared:WaitForChild("SplashArenaInterior"))
+local MatchRoundBridge = require(game:GetService("ServerScriptService"):WaitForChild("Server"):WaitForChild("MatchRoundBridge"))
 
 local SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME = "SplashKillFishPreload"
 
 local SHARK_TEMPLATE_NAME = "SharkBillboardSplash"
 local BOAT_TEMPLATE_NAME = "BoatBillboardSplash"
+local MONSTER_TEMPLATE_NAME = "MonsterBillboardSplash"
 local TEMPLATE_HOLDER_NAME = "WaterTemplate"
 local ACTIVE_FOLDER_NAME = "WaterSplashes"
 local MAX_ACTIVE_SPLASHES = 12
@@ -44,6 +46,7 @@ local BOUNDARY_EXIT_GLIDE_SECONDS = 1.0
 local SHARK_MAX_LIFETIME_SECONDS = 120
 local Y_OFFSET = 0.02
 local BOAT_RENDER_LIFT = 0.06
+local MONSTER_RENDER_LIFT = 0.06
 local SPAWN_LIFT_ABOVE_BASEPLATE = 2.5
 
 local HIT_COLLIDER_RADIUS = 14
@@ -71,10 +74,27 @@ local MAP_ID = "main"
 
 local activeBoat: Model? = nil
 local boatRespawnPending = false
+local nextBoatPatrolNorthbound = false
+local activeMonster: Model? = nil
+local monsterRespawnPending = false
+local monsterSpawnScheduledThisRound = false
+local monsterVisitedThisRound = false
+local boatSpawnScheduledThisRound = false
+local monsterSchedulePendingBoat = false
+local monsterScheduleGen = 0
+local boatScheduleGen = 0
+local suppressMonsterEventCallbacks = false
+
+local function getSpecialTargetExclusionRadiusStuds(studs: number): number
+	return studs * 0.5 + 6
+end
 
 local function getActiveBoatExclusionRadiusStuds(): number
-	local boatStuds = MatchSplashConfig.getLegendaryTargetStuds(MAP_ID)
-	return boatStuds * 0.5 + 6
+	return getSpecialTargetExclusionRadiusStuds(MatchSplashConfig.getLegendaryTargetStuds(MAP_ID))
+end
+
+local function getActiveMonsterExclusionRadiusStuds(): number
+	return getSpecialTargetExclusionRadiusStuds(MatchSplashConfig.getJackpotTargetStuds(MAP_ID))
 end
 
 local function isNearActiveBoat(pos: Vector3): boolean
@@ -86,6 +106,46 @@ local function isNearActiveBoat(pos: Vector3): boolean
 	local dx = pos.X - boatPos.X
 	local dz = pos.Z - boatPos.Z
 	return dx * dx + dz * dz < radius * radius
+end
+
+local function isNearActiveMonster(pos: Vector3): boolean
+	if not activeMonster or not activeMonster.Parent then
+		return false
+	end
+	local monsterPos = activeMonster:GetPivot().Position
+	local radius = getActiveMonsterExclusionRadiusStuds()
+	local dx = pos.X - monsterPos.X
+	local dz = pos.Z - monsterPos.Z
+	return dx * dx + dz * dz < radius * radius
+end
+
+local function isNearBlockingSpecialTarget(pos: Vector3): boolean
+	return isNearActiveBoat(pos) or isNearActiveMonster(pos)
+end
+
+local function isMonsterEventActive(): boolean
+	return activeMonster ~= nil and activeMonster.Parent ~= nil
+end
+
+local function getBoatFadeTransparencyForMonsterOverlap(boatPos: Vector3): number
+	if not activeMonster or not activeMonster.Parent then
+		return 0
+	end
+
+	local monsterPos = activeMonster:GetPivot().Position
+	local monsterRadius = getActiveMonsterExclusionRadiusStuds()
+	local boatRadius = getActiveBoatExclusionRadiusStuds() * 0.5
+	local combinedRadius = monsterRadius + boatRadius
+
+	local dx = boatPos.X - monsterPos.X
+	local dz = boatPos.Z - monsterPos.Z
+	local dist = math.sqrt(dx * dx + dz * dz)
+	if dist >= combinedRadius then
+		return 0
+	end
+
+	local t = 1 - dist / combinedRadius
+	return math.clamp(t * t, 0, 1)
 end
 
 type BoatHealthMemory = {
@@ -119,6 +179,37 @@ local function resolveBoatSpawnHealth(): (number, number)
 	return maxHealth, maxHealth
 end
 
+type MonsterHealthMemory = {
+	health: number,
+	maxHealth: number,
+}
+
+local monsterHealthMemory: MonsterHealthMemory? = nil
+
+local function clearMonsterHealthMemory()
+	monsterHealthMemory = nil
+end
+
+local function persistMonsterHealthFromModel(model: Model)
+	local health = model:GetAttribute(CONVEYOR_HEALTH_ATTRIBUTE)
+	local maxHealth = model:GetAttribute(CONVEYOR_MAX_HEALTH_ATTRIBUTE)
+	if typeof(health) == "number" and typeof(maxHealth) == "number" and health > 0 then
+		monsterHealthMemory = { health = health, maxHealth = maxHealth }
+	else
+		clearMonsterHealthMemory()
+	end
+end
+
+local function resolveMonsterSpawnHealth(): (number, number)
+	if monsterHealthMemory then
+		return monsterHealthMemory.health, monsterHealthMemory.maxHealth
+	end
+	local hpMin = MatchSplashConfig.getJackpotTargetHealthMin(MAP_ID)
+	local hpMax = MatchSplashConfig.getJackpotTargetHealthMax(MAP_ID)
+	local maxHealth = math.random(hpMin, math.max(hpMax, hpMin))
+	return maxHealth, maxHealth
+end
+
 local function fireSplashKillFishPreloadToAll(imageId: string)
 	local remote = ReplicatedStorage:FindFirstChild(SPLASH_KILL_FISH_PRELOAD_REMOTE_NAME)
 	if not remote or not remote:IsA("RemoteEvent") then
@@ -142,6 +233,7 @@ type BoatPatrol = {
 	southZ: number,
 	zSign: number,
 	speed: number,
+	exitAtNorth: boolean,
 }
 
 local function ensureTemplateHolder(): Folder
@@ -170,7 +262,9 @@ local function mountCoverSurfaceGui(
 	footprintStuds: number,
 	coverImageId: string,
 	fishImageId: string,
-	fishScale: number
+	fishScale: number,
+	coverRotationDeg: number?,
+	alwaysOnTop: boolean?
 ): SurfaceGui
 	local existing = anchor:FindFirstChild(TARGET_SURFACE_GUI_NAME)
 	if existing then
@@ -184,6 +278,7 @@ local function mountCoverSurfaceGui(
 	surfaceGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
 	surfaceGui.PixelsPerStud = SURFACE_PIXELS_PER_STUD
 	surfaceGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	surfaceGui.AlwaysOnTop = alwaysOnTop == true
 	surfaceGui.Parent = anchor
 
 	local canvasSize = footprintStuds * SURFACE_PIXELS_PER_STUD
@@ -198,6 +293,9 @@ local function mountCoverSurfaceGui(
 	fishImage.Image = fishImageId
 	fishImage.ScaleType = Enum.ScaleType.Fit
 	fishImage.ZIndex = 1
+	if alwaysOnTop then
+		fishImage.ImageTransparency = 1
+	end
 	fishImage.Parent = surfaceGui
 
 	local coverImage = Instance.new("ImageLabel")
@@ -208,6 +306,7 @@ local function mountCoverSurfaceGui(
 	coverImage.Size = UDim2.fromScale(1, 1)
 	coverImage.Image = coverImageId
 	coverImage.ScaleType = Enum.ScaleType.Fit
+	coverImage.Rotation = coverRotationDeg or 0
 	coverImage.ZIndex = 3
 	coverImage.Parent = surfaceGui
 
@@ -274,6 +373,36 @@ local function buildBoatSplashTemplate(visual: MatchSplashConfig.SplashVisual): 
 	return model
 end
 
+local function buildMonsterSplashTemplate(visual: MatchSplashConfig.SplashVisual): Model?
+	local frames = MatchSplashConfig.getJackpotTargetEmergenceFrameIds(MAP_ID)
+	if not frames or #frames == 0 then
+		return nil
+	end
+
+	local studs = MatchSplashConfig.getJackpotTargetStuds(MAP_ID)
+	local fishScale = getFishBillboardScale(visual)
+
+	local model = Instance.new("Model")
+	model.Name = MONSTER_TEMPLATE_NAME
+
+	local anchor = Instance.new("Part")
+	anchor.Name = "Anchor"
+	anchor.Size = Vector3.new(studs, 0.2, studs)
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Massless = true
+	anchor.Parent = model
+	model.PrimaryPart = anchor
+
+	mountCoverSurfaceGui(anchor, studs, frames[1], SplashKillFishFrames.FALLBACK_IMAGE_ID, fishScale, 180, true)
+
+	model.Parent = ensureTemplateHolder()
+	return model
+end
+
 local function getOrCreateSharkTemplate(visual: MatchSplashConfig.SplashVisual): Model?
 	local frames = visual.rareTargetFrameIds
 	if not frames or #frames == 0 then
@@ -297,6 +426,18 @@ local function getOrCreateBoatTemplate(visual: MatchSplashConfig.SplashVisual): 
 		cached:Destroy()
 	end
 	return buildBoatSplashTemplate(visual)
+end
+
+local function getOrCreateMonsterTemplate(visual: MatchSplashConfig.SplashVisual): Model?
+	if not MatchSplashConfig.getJackpotTargetEmergenceFrameIds(MAP_ID) then
+		return nil
+	end
+	local holder = ensureTemplateHolder()
+	local cached = holder:FindFirstChild(MONSTER_TEMPLATE_NAME)
+	if cached then
+		cached:Destroy()
+	end
+	return buildMonsterSplashTemplate(visual)
 end
 
 local function sanitizeModel(model: Model)
@@ -400,6 +541,13 @@ local function swimYawForZSign(zSign: number): number
 	return if zSign > 0 then 0 else math.pi
 end
 
+local function getBoatModelYaw(northbound: boolean, zSign: number, artOffset: number): number
+	if northbound then
+		return 0
+	end
+	return getModelYawFromSwimYaw(swimYawForZSign(zSign), artOffset)
+end
+
 local function attachHitCollider(model: Model, surfaceY: number): BasePart
 	local splashCenter = model:GetPivot().Position
 	local hit = Instance.new("Part")
@@ -447,6 +595,106 @@ local function getSurfaceFadeLabels(model: Model): { ImageLabel }
 	return labels
 end
 
+local function applySurfaceLabelsFade(model: Model, fadeT: number)
+	for _, label in getSurfaceFadeLabels(model) do
+		if label.Parent then
+			label.ImageTransparency = fadeT
+		end
+	end
+end
+
+local function disableMonsterHitQuery(model: Model)
+	local hitPart = model:FindFirstChild(HIT_COLLIDER_NAME)
+	if hitPart and hitPart:IsA("BasePart") then
+		hitPart.CanQuery = false
+	end
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.CanQuery = false
+		end
+	end
+end
+
+local function waitWhileAlive(isAlive: () -> boolean, durationSec: number): boolean
+	local endTime = os.clock() + durationSec
+	while os.clock() < endTime and isAlive() do
+		RunService.Heartbeat:Wait()
+	end
+	return isAlive()
+end
+
+local function pickMonsterPosition(bounds: ArenaBounds, awayFrom: Vector3?, skipBoatCheck: boolean?): Vector3?
+	local surfaceY = bounds.floorY + SPAWN_LIFT_ABOVE_BASEPLATE + Y_OFFSET
+	local monsterRenderY = surfaceY + MONSTER_RENDER_LIFT
+	local innerWidth = math.max(bounds.widthX - 2 * SPAWN_MARGIN, 0)
+	local innerDepth = math.max(bounds.depthZ - 2 * SPAWN_MARGIN, 0)
+	local minRelocateDist = MatchSplashConfig.getJackpotTargetStuds(MAP_ID) * 0.5
+	local minRelocateDistSq = minRelocateDist * minRelocateDist
+
+	for _ = 1, MAX_SPAWN_ATTEMPTS do
+		local x = bounds.minX + SPAWN_MARGIN + math.random() * innerWidth
+		local z = bounds.minZ + SPAWN_MARGIN + math.random() * innerDepth
+		local candidate = Vector3.new(x, monsterRenderY, z)
+
+		if awayFrom then
+			local dx = candidate.X - awayFrom.X
+			local dz = candidate.Z - awayFrom.Z
+			if dx * dx + dz * dz < minRelocateDistSq then
+				continue
+			end
+		end
+
+		if not isBlockedBySpacing(candidate)
+			and not SplashSpawnExclusions.isNearTurret(candidate)
+			and (skipBoatCheck or not isNearActiveBoat(candidate))
+			and SplashArenaInterior.isInsideArena(candidate)
+		then
+			return candidate
+		end
+	end
+
+	return nil
+end
+
+local function relocateMonster(model: Model, bounds: ArenaBounds, awayFrom: Vector3): boolean
+	local newPos = pickMonsterPosition(bounds, awayFrom)
+	if not newPos then
+		newPos = pickMonsterPosition(bounds, nil)
+	end
+	if not newPos then
+		return false
+	end
+
+	local surfaceY = bounds.floorY + SPAWN_LIFT_ABOVE_BASEPLATE + Y_OFFSET
+	model:PivotTo(CFrame.new(newPos))
+	snapToFloor(model, bounds.floorY, SPAWN_LIFT_ABOVE_BASEPLATE + Y_OFFSET + MONSTER_RENDER_LIFT)
+
+	local hitPart = model:FindFirstChild(HIT_COLLIDER_NAME)
+	if hitPart and hitPart:IsA("BasePart") then
+		repositionHitCollider(model, hitPart, surfaceY)
+	end
+
+	return true
+end
+
+local function runMonsterSubmergeAndDestroy(model: Model, isAlive: () -> boolean)
+	if not isAlive() then
+		return
+	end
+	model:SetAttribute(SplashKillFishFrames.MONSTER_PHASE_ATTRIBUTE, SplashKillFishFrames.MONSTER_PHASE_SUBMERGE)
+	disableMonsterHitQuery(model)
+
+	local submergeSec = MatchSplashConfig.getJackpotTargetSubmergeDurationSec(MAP_ID)
+	local submergeEnd = os.clock() + submergeSec
+	while os.clock() < submergeEnd and isAlive() do
+		RunService.Heartbeat:Wait()
+	end
+
+	if isAlive() then
+		model:Destroy()
+	end
+end
+
 local function runSwimOffExitGlide(
 	model: Model,
 	isAlive: () -> boolean,
@@ -473,14 +721,19 @@ local function runSwimOffExitGlide(
 		local dt = RunService.Heartbeat:Wait()
 		local t = math.clamp((os.clock() - glideStart) / BOUNDARY_EXIT_GLIDE_SECONDS, 0, 1)
 		local fadeT = 1 - (1 - t) * (1 - t)
+
+		local pivot = model:GetPivot()
+		local nextPos = pivot.Position + moveDir * speed * dt
+		if model:GetAttribute(SplashKillFishFrames.TARGET_KIND_ATTRIBUTE) == SplashKillFishFrames.TARGET_KIND_BOAT then
+			fadeT = math.max(fadeT, getBoatFadeTransparencyForMonsterOverlap(nextPos))
+		end
+
 		for _, label in fadeLabels do
 			if label.Parent then
 				label.ImageTransparency = fadeT
 			end
 		end
 
-		local pivot = model:GetPivot()
-		local nextPos = pivot.Position + moveDir * speed * dt
 		model:PivotTo(CFrame.new(nextPos) * CFrame.Angles(0, modelYaw, 0))
 		if record then
 			record.position = nextPos
@@ -541,7 +794,7 @@ local function runSharkLifecycle(
 			local pivot = model:GetPivot()
 			local nextPos = pivot.Position + swimVelocity * sharkDrift.swimSpeed * dt
 
-			if isNearActiveBoat(nextPos) then
+			if isNearActiveBoat(nextPos) or isNearActiveMonster(nextPos) then
 				model:PivotTo(CFrame.new(nextPos) * CFrame.Angles(0, modelYaw, 0))
 				record.position = nextPos
 				if hit then
@@ -633,16 +886,24 @@ local function runBoatPatrolLifecycle(
 			local pivot = model:GetPivot()
 			local pos = pivot.Position
 			local rawNextZ = pos.Z + patrol.zSign * patrol.speed * dt
-			local nextZ = math.min(patrol.southZ, rawNextZ)
+			local nextZ = if patrol.exitAtNorth
+				then math.max(patrol.northZ, rawNextZ)
+				else math.min(patrol.southZ, rawNextZ)
 
-			local swimYaw = swimYawForZSign(patrol.zSign)
-			local modelYaw = getModelYawFromSwimYaw(swimYaw, artOffset)
-			model:PivotTo(CFrame.new(patrol.laneX, boatRenderY, nextZ) * CFrame.Angles(0, modelYaw, 0))
+			local modelYaw = getBoatModelYaw(patrol.exitAtNorth, patrol.zSign, artOffset)
+			local nextPos = Vector3.new(patrol.laneX, boatRenderY, nextZ)
+			model:PivotTo(CFrame.new(nextPos) * CFrame.Angles(0, modelYaw, 0))
 			if hit then
 				repositionHitCollider(model, hit, surfaceY)
 			end
 
-			if rawNextZ >= patrol.southZ - 0.05 then
+			local monsterFadeT = getBoatFadeTransparencyForMonsterOverlap(nextPos)
+			applySurfaceLabelsFade(model, monsterFadeT)
+
+			local reachedExit = if patrol.exitAtNorth
+				then rawNextZ <= patrol.northZ + 0.05
+				else rawNextZ >= patrol.southZ - 0.05
+			if reachedExit then
 				runSwimOffExitGlide(
 					model,
 					isAlive,
@@ -655,6 +916,69 @@ local function runBoatPatrolLifecycle(
 				)
 				return
 			end
+		end
+	end)
+end
+
+local function runMonsterLifecycle(
+	model: Model,
+	activeFolder: Folder,
+	bounds: ArenaBounds,
+	onRemoved: () -> ()
+)
+	local aborted = false
+	local ancestryConn: RBXScriptConnection
+	ancestryConn = model.AncestryChanged:Connect(function(_, parent)
+		if parent ~= activeFolder then
+			aborted = true
+			ancestryConn:Disconnect()
+			onRemoved()
+		end
+	end)
+
+	local function isAlive(): boolean
+		return not aborted and model.Parent == activeFolder
+	end
+
+	task.spawn(function()
+		if not waitWhileAlive(isAlive, FADE_IN_SECONDS) then
+			return
+		end
+
+		local emergeFrames = MatchSplashConfig.getJackpotTargetEmergenceFrameIds(MAP_ID)
+		local emergeSec = (if emergeFrames then #emergeFrames else 5)
+			* MatchSplashConfig.getJackpotTargetAnimStepSec(MAP_ID)
+		local idleSec = MatchSplashConfig.getJackpotTargetIdleLifetimeSec(MAP_ID)
+		local submergeSec = MatchSplashConfig.getJackpotTargetSubmergeDurationSec(MAP_ID)
+		local cycleCount = MatchSplashConfig.getJackpotTargetCycleCount(MAP_ID)
+
+		for cycle = 1, cycleCount do
+			if not isAlive() then
+				return
+			end
+
+			model:SetAttribute(SplashKillFishFrames.MONSTER_PHASE_ATTRIBUTE, SplashKillFishFrames.MONSTER_PHASE_EMERGE)
+			if not waitWhileAlive(isAlive, emergeSec) then
+				return
+			end
+
+			model:SetAttribute(SplashKillFishFrames.MONSTER_PHASE_ATTRIBUTE, SplashKillFishFrames.MONSTER_PHASE_IDLE)
+			if not waitWhileAlive(isAlive, idleSec) then
+				return
+			end
+
+			model:SetAttribute(SplashKillFishFrames.MONSTER_PHASE_ATTRIBUTE, SplashKillFishFrames.MONSTER_PHASE_SUBMERGE)
+			if not waitWhileAlive(isAlive, submergeSec) then
+				return
+			end
+
+			if cycle < cycleCount and isAlive() then
+				relocateMonster(model, bounds, model:GetPivot().Position)
+			end
+		end
+
+		if isAlive() then
+			model:Destroy()
 		end
 	end)
 end
@@ -681,7 +1005,7 @@ local function trySpawn(
 		local x = bounds.minX + SPAWN_MARGIN + math.random() * innerWidth
 		local z = bounds.minZ + SPAWN_MARGIN + math.random() * innerDepth
 		local pos = Vector3.new(x, surfaceY, z)
-		if not isBlockedBySpacing(pos) and not SplashSpawnExclusions.isNearTurret(pos) and not isNearActiveBoat(pos) and SplashArenaInterior.isInsideArena(pos) then
+		if not isBlockedBySpacing(pos) and not SplashSpawnExclusions.isNearTurret(pos) and not isNearBlockingSpecialTarget(pos) and SplashArenaInterior.isInsideArena(pos) then
 			local clone = sharkTemplate:Clone()
 			local model = normalizeToModel(clone)
 			if not model.PrimaryPart then
@@ -699,7 +1023,10 @@ local function trySpawn(
 			model:SetAttribute(CONVEYOR_ITEM_ATTRIBUTE, true)
 			model:SetAttribute(CONVEYOR_MAX_HEALTH_ATTRIBUTE, hp)
 			model:SetAttribute(CONVEYOR_HEALTH_ATTRIBUTE, hp)
-			model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, math.random(SPLASH_CASH_MIN, SPLASH_CASH_MAX))
+			local cashReward = if spawnRare
+				then MatchSplashConfig.rollLargeTargetCashReward(MAP_ID)
+				else MatchSplashConfig.rollCommonTargetCashReward(MAP_ID)
+			model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, cashReward)
 			model:SetAttribute(CONVEYOR_SCALE_ATTRIBUTE, scale)
 			model:SetAttribute(IS_WATER_SPLASH_ATTRIBUTE, true)
 			model:SetAttribute(SplashKillFishFrames.TARGET_KIND_ATTRIBUTE, SplashKillFishFrames.TARGET_KIND_SHARK)
@@ -708,13 +1035,7 @@ local function trySpawn(
 			local swimYaw = math.random() * math.pi * 2
 			model:SetAttribute(SplashKillFishFrames.SWIM_YAW_ATTRIBUTE, swimYaw)
 
-			local splashFishImageId: string
-			local splashFishTier: string
-			if spawnRare then
-				splashFishImageId, splashFishTier = SplashKillFishFrames.pickRareSplashFish(MAP_ID)
-			else
-				splashFishImageId, splashFishTier = SplashKillFishFrames.pickCommonSplashFish(MAP_ID)
-			end
+			local splashFishImageId, splashFishTier = SplashKillFishFrames.pickCommonSplashFish(MAP_ID)
 
 			model:SetAttribute(SplashKillFishFrames.IMAGE_ID_ATTRIBUTE, splashFishImageId)
 			model:SetAttribute(SplashKillFishFrames.RARITY_ATTRIBUTE, splashFishTier)
@@ -775,8 +1096,9 @@ local function trySpawnBoat(
 	end
 
 	local laneX = (bounds.minX + bounds.maxX) * 0.5
-	local startZ = northZ
-	local zSign = 1
+	local northbound = nextBoatPatrolNorthbound
+	local zSign = if northbound then -1 else 1
+	local startZ = if northbound then southZ else northZ
 	local pos = Vector3.new(laneX, boatRenderY, startZ)
 
 	if SplashSpawnExclusions.isNearTurret(pos) or not SplashArenaInterior.isInsideArena(pos) then
@@ -801,31 +1123,34 @@ local function trySpawnBoat(
 	model:SetAttribute(CONVEYOR_ITEM_ATTRIBUTE, true)
 	model:SetAttribute(CONVEYOR_MAX_HEALTH_ATTRIBUTE, maxHp)
 	model:SetAttribute(CONVEYOR_HEALTH_ATTRIBUTE, hp)
-	model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, math.random(SPLASH_CASH_MIN, SPLASH_CASH_MAX))
+	model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, MatchSplashConfig.rollRareTargetCashReward(MAP_ID))
 	model:SetAttribute(CONVEYOR_SCALE_ATTRIBUTE, scale)
 	model:SetAttribute(IS_WATER_SPLASH_ATTRIBUTE, true)
 	model:SetAttribute(SplashKillFishFrames.TARGET_KIND_ATTRIBUTE, SplashKillFishFrames.TARGET_KIND_BOAT)
-	model:SetAttribute(SplashKillFishFrames.TARGET_SIZE_TIER_ATTRIBUTE, SplashKillFishFrames.TARGET_SIZE_LEGENDARY)
+	model:SetAttribute(SplashKillFishFrames.TARGET_SIZE_TIER_ATTRIBUTE, SplashKillFishFrames.TARGET_SIZE_RARE)
 
 	local swimYaw = swimYawForZSign(zSign)
 	model:SetAttribute(SplashKillFishFrames.SWIM_YAW_ATTRIBUTE, swimYaw)
 
-	local splashFishImageId, splashFishTier = SplashKillFishFrames.pickLegendarySplashFish(MAP_ID)
+	local splashFishImageId, splashFishTier = SplashKillFishFrames.pickRareSplashFish(MAP_ID)
 	model:SetAttribute(SplashKillFishFrames.IMAGE_ID_ATTRIBUTE, splashFishImageId)
 	model:SetAttribute(SplashKillFishFrames.RARITY_ATTRIBUTE, splashFishTier)
 	fireSplashKillFishPreloadToAll(splashFishImageId)
 
-	local coverId = MatchSplashConfig.getLegendaryTargetImageId(MAP_ID) or ""
+	local calmCoverId = MatchSplashConfig.getLegendaryTargetCoverImageIdForZSign(MAP_ID, zSign, false) or ""
+	local coverId = MatchSplashConfig.getLegendaryTargetCoverImageIdForZSign(MAP_ID, zSign, isMonsterEventActive())
+		or calmCoverId
+	model:SetAttribute(SplashKillFishFrames.BOAT_CALM_COVER_IMAGE_ID_ATTRIBUTE, calmCoverId)
 	local fishScale = getFishBillboardScale(splashVisual)
 
 	local anchor = model.PrimaryPart
 	if anchor then
 		anchor.Size = Vector3.new(footprintStuds, 0.2, footprintStuds)
-		mountCoverSurfaceGui(anchor, footprintStuds, coverId, splashFishImageId, fishScale)
+		mountCoverSurfaceGui(anchor, footprintStuds, coverId, splashFishImageId, fishScale, if northbound then 180 else 0)
 	end
 
 	local artOffset = MatchSplashConfig.getLegendaryTargetArtYawOffsetRad(MAP_ID)
-	local modelYaw = getModelYawFromSwimYaw(swimYaw, artOffset)
+	local modelYaw = getBoatModelYaw(northbound, zSign, artOffset)
 	model:PivotTo(CFrame.new(pos) * CFrame.Angles(0, modelYaw, 0))
 	snapToFloor(model, bounds.floorY, SPAWN_LIFT_ABOVE_BASEPLATE + Y_OFFSET + BOAT_RENDER_LIFT)
 	attachHitCollider(model, surfaceY)
@@ -836,15 +1161,104 @@ local function trySpawnBoat(
 		southZ = southZ,
 		zSign = zSign,
 		speed = MatchSplashConfig.getLegendaryTargetSwimSpeedStudsPerSec(MAP_ID),
+		exitAtNorth = northbound,
 	}
 
 	activeBoat = model
+	nextBoatPatrolNorthbound = not nextBoatPatrolNorthbound
 	model.Destroying:Connect(function()
 		persistBoatHealthFromModel(model)
 	end)
 	model.Parent = activeFolder
 	runBoatPatrolLifecycle(model, activeFolder, surfaceY, boatRenderY, patrol, function()
 		clearActiveBoat(onRemoved)
+	end)
+	return true
+end
+
+local function clearActiveMonster(onRemoved: () -> ())
+	if activeMonster then
+		activeMonster = nil
+	end
+	Workspace:SetAttribute(SplashKillFishFrames.MONSTER_EVENT_ACTIVE_ATTRIBUTE, false)
+	onRemoved()
+end
+
+local function trySpawnMonster(
+	monsterTemplate: Model,
+	bounds: ArenaBounds,
+	activeFolder: Folder,
+	splashVisual: MatchSplashConfig.SplashVisual,
+	onRemoved: () -> ()
+): boolean
+	if activeMonster then
+		return false
+	end
+
+	local frames = MatchSplashConfig.getJackpotTargetEmergenceFrameIds(MAP_ID)
+	if not frames or #frames == 0 then
+		return false
+	end
+
+	local surfaceY = bounds.floorY + SPAWN_LIFT_ABOVE_BASEPLATE + Y_OFFSET
+
+	local pos = pickMonsterPosition(bounds, nil, false)
+	if not pos and activeBoat then
+		pos = pickMonsterPosition(bounds, nil, true)
+	end
+	if not pos then
+		return false
+	end
+
+	local clone = monsterTemplate:Clone()
+	local model = normalizeToModel(clone)
+	if not model.PrimaryPart then
+		model:Destroy()
+		return false
+	end
+
+	sanitizeModel(model)
+	configureSplashParts(model)
+
+	local footprintStuds = MatchSplashConfig.getJackpotTargetStuds(MAP_ID)
+	local scale = SCALE_MIN + math.random() * (SCALE_MAX - SCALE_MIN)
+	safeScaleTo(model, scale)
+
+	local hp, maxHp = resolveMonsterSpawnHealth()
+	model:SetAttribute(CONVEYOR_ITEM_ATTRIBUTE, true)
+	model:SetAttribute(CONVEYOR_MAX_HEALTH_ATTRIBUTE, maxHp)
+	model:SetAttribute(CONVEYOR_HEALTH_ATTRIBUTE, hp)
+	model:SetAttribute(CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE, MatchSplashConfig.rollLegendaryTargetCashReward(MAP_ID))
+	model:SetAttribute(CONVEYOR_SCALE_ATTRIBUTE, scale)
+	model:SetAttribute(IS_WATER_SPLASH_ATTRIBUTE, true)
+	model:SetAttribute(SplashKillFishFrames.TARGET_KIND_ATTRIBUTE, SplashKillFishFrames.TARGET_KIND_MONSTER)
+	model:SetAttribute(SplashKillFishFrames.TARGET_SIZE_TIER_ATTRIBUTE, SplashKillFishFrames.TARGET_SIZE_LEGENDARY)
+	model:SetAttribute(SplashKillFishFrames.MONSTER_PHASE_ATTRIBUTE, SplashKillFishFrames.MONSTER_PHASE_EMERGE)
+
+	local splashFishImageId, splashFishTier = SplashKillFishFrames.pickLegendarySplashFish(MAP_ID)
+	model:SetAttribute(SplashKillFishFrames.IMAGE_ID_ATTRIBUTE, splashFishImageId)
+	model:SetAttribute(SplashKillFishFrames.RARITY_ATTRIBUTE, splashFishTier)
+	fireSplashKillFishPreloadToAll(splashFishImageId)
+
+	local fishScale = getFishBillboardScale(splashVisual)
+	local anchor = model.PrimaryPart
+	if anchor then
+		anchor.Size = Vector3.new(footprintStuds, 0.2, footprintStuds)
+		mountCoverSurfaceGui(anchor, footprintStuds, frames[1], splashFishImageId, fishScale, 180, true)
+	end
+
+	model:PivotTo(CFrame.new(pos))
+	snapToFloor(model, bounds.floorY, SPAWN_LIFT_ABOVE_BASEPLATE + Y_OFFSET + MONSTER_RENDER_LIFT)
+	attachHitCollider(model, surfaceY)
+
+	activeMonster = model
+	Workspace:SetAttribute(SplashKillFishFrames.MONSTER_EVENT_ACTIVE_ATTRIBUTE, true)
+	model.Destroying:Connect(function()
+		persistMonsterHealthFromModel(model)
+	end)
+	model.Parent = activeFolder
+	runMonsterLifecycle(model, activeFolder, bounds, function()
+		clearActiveMonster(onRemoved)
 	end)
 	return true
 end
@@ -862,15 +1276,17 @@ local function start()
 	end
 
 	local boatTemplate = getOrCreateBoatTemplate(splashVisual)
+	local monsterTemplate = getOrCreateMonsterTemplate(splashVisual)
 
 	print(string.format(
-		"%s Started map=%s commonStuds=%s rareStuds=%s rareChance=%s boat=%s",
+		"%s Started map=%s commonStuds=%s rareStuds=%s rareChance=%s boat=%s monster=%s",
 		LOG_PREFIX,
 		MAP_ID,
 		tostring(MatchSplashConfig.getCommonTargetStuds(MAP_ID)),
 		tostring(MatchSplashConfig.getRareTargetStuds(MAP_ID)),
 		tostring(MatchSplashConfig.getRareTargetSpawnChance(MAP_ID)),
-		tostring(boatTemplate ~= nil)
+		tostring(boatTemplate ~= nil),
+		tostring(monsterTemplate ~= nil)
 	))
 
 	if not SplashArenaInterior.refresh() then
@@ -889,6 +1305,72 @@ local function start()
 
 	local activeFolder = getOrCreateActiveFolder()
 
+	local function cancelMonsterSchedule()
+		monsterScheduleGen += 1
+		monsterRespawnPending = false
+	end
+
+	local function cancelBoatSchedule()
+		boatScheduleGen += 1
+		boatRespawnPending = false
+	end
+
+	local function onMonsterEventEnded()
+		monsterVisitedThisRound = true
+	end
+
+	local scheduleMonsterForRound: () -> ()
+
+	scheduleMonsterForRound = function()
+		if not monsterTemplate then
+			return
+		end
+		if monsterSpawnScheduledThisRound or monsterVisitedThisRound or activeMonster or monsterRespawnPending then
+			return
+		end
+
+		monsterSpawnScheduledThisRound = true
+		monsterRespawnPending = true
+		local minDelay = MatchSplashConfig.getJackpotTargetRespawnDelayMinSec(MAP_ID)
+		local maxDelay = MatchSplashConfig.getJackpotTargetRespawnDelayMaxSec(MAP_ID)
+		local delaySec = minDelay + math.random() * math.max(maxDelay - minDelay, 0)
+		local scheduleGen = monsterScheduleGen
+		task.delay(delaySec, function()
+			if scheduleGen ~= monsterScheduleGen then
+				return
+			end
+			monsterRespawnPending = false
+			if monsterVisitedThisRound or activeMonster then
+				return
+			end
+			if trySpawnMonster(monsterTemplate :: Model, bounds, activeFolder, splashVisual, onMonsterEventEnded) then
+				return
+			end
+			monsterSpawnScheduledThisRound = false
+			task.delay(2, function()
+				if scheduleGen ~= monsterScheduleGen then
+					return
+				end
+				if monsterVisitedThisRound or activeMonster then
+					return
+				end
+				scheduleMonsterForRound()
+			end)
+		end)
+	end
+
+	local function tryScheduleMonsterAfterBoat()
+		if not monsterSchedulePendingBoat then
+			return
+		end
+		if monsterSpawnScheduledThisRound or monsterVisitedThisRound then
+			monsterSchedulePendingBoat = false
+			return
+		end
+		monsterSchedulePendingBoat = false
+		scheduleMonsterForRound()
+	end
+
 	local function scheduleBoatRespawn()
 		if not boatTemplate then
 			return
@@ -900,28 +1382,101 @@ local function start()
 		local minDelay = MatchSplashConfig.getLegendaryTargetRespawnDelayMinSec(MAP_ID)
 		local maxDelay = MatchSplashConfig.getLegendaryTargetRespawnDelayMaxSec(MAP_ID)
 		local delaySec = minDelay + math.random() * math.max(maxDelay - minDelay, 0)
+		local scheduleGen = boatScheduleGen
 		task.delay(delaySec, function()
+			if scheduleGen ~= boatScheduleGen then
+				return
+			end
 			boatRespawnPending = false
 			if activeBoat then
+				scheduleBoatRespawn()
 				return
 			end
 			if trySpawnBoat(boatTemplate :: Model, bounds, activeFolder, splashVisual, scheduleBoatRespawn) then
+				tryScheduleMonsterAfterBoat()
 				return
 			end
 			scheduleBoatRespawn()
 		end)
 	end
 
+	local function scheduleBoatForRound()
+		if not boatTemplate then
+			return
+		end
+		if boatSpawnScheduledThisRound or boatRespawnPending then
+			return
+		end
+		if activeBoat then
+			boatSpawnScheduledThisRound = true
+			tryScheduleMonsterAfterBoat()
+			return
+		end
+
+		boatSpawnScheduledThisRound = true
+		boatRespawnPending = true
+		local minDelay = MatchSplashConfig.getLegendaryTargetRespawnDelayMinSec(MAP_ID)
+		local maxDelay = MatchSplashConfig.getLegendaryTargetRespawnDelayMaxSec(MAP_ID)
+		local delaySec = minDelay + math.random() * math.max(maxDelay - minDelay, 0)
+		local scheduleGen = boatScheduleGen
+		task.delay(delaySec, function()
+			if scheduleGen ~= boatScheduleGen then
+				return
+			end
+			boatRespawnPending = false
+			if activeBoat then
+				tryScheduleMonsterAfterBoat()
+				return
+			end
+			if trySpawnBoat(boatTemplate :: Model, bounds, activeFolder, splashVisual, scheduleBoatRespawn) then
+				tryScheduleMonsterAfterBoat()
+				return
+			end
+			scheduleBoatRespawn()
+		end)
+	end
+
+	local function onActiveRoundStarted()
+		monsterSpawnScheduledThisRound = false
+		monsterVisitedThisRound = false
+		boatSpawnScheduledThisRound = false
+		monsterSchedulePendingBoat = true
+		scheduleBoatForRound()
+	end
+
+	local function onRoundEnded()
+		suppressMonsterEventCallbacks = true
+		cancelMonsterSchedule()
+		cancelBoatSchedule()
+		monsterSpawnScheduledThisRound = false
+		monsterVisitedThisRound = false
+		boatSpawnScheduledThisRound = false
+		monsterSchedulePendingBoat = false
+
+		if activeMonster and activeMonster.Parent then
+			activeMonster:Destroy()
+		end
+		if activeBoat and activeBoat.Parent then
+			activeBoat:Destroy()
+		end
+
+		activeMonster = nil
+		activeBoat = nil
+		Workspace:SetAttribute(SplashKillFishFrames.MONSTER_EVENT_ACTIVE_ATTRIBUTE, false)
+		suppressMonsterEventCallbacks = false
+	end
+
+	MatchRoundBridge.onActiveRoundStarted(onActiveRoundStarted)
+	MatchRoundBridge.onRoundEnded(onRoundEnded)
+
 	task.spawn(function()
 		while true do
-			if #active < MAX_ACTIVE_SPLASHES then
+			if not isMonsterEventActive() and #active < MAX_ACTIVE_SPLASHES then
 				trySpawn(sharkTemplate, bounds, activeFolder, splashVisual)
 			end
 			task.wait(SPAWN_INTERVAL)
 		end
 	end)
-
-	scheduleBoatRespawn()
 end
 
 start()

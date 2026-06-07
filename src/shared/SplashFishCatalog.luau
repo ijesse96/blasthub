@@ -327,6 +327,10 @@ function SplashFishCatalog.getLegendarySpawnableIdsForMap(mapId: string): { stri
 	return SplashFishCatalog.getIdsForTier(mapId, "legendary")
 end
 
+function SplashFishCatalog.getJackpotSpawnableIdsForMap(mapId: string): { string }
+	return SplashFishCatalog.getIdsForTier(mapId, "jackpot")
+end
+
 function SplashFishCatalog.getRarePlusSpawnableIdsForMap(mapId: string): { string }
 	local mapTiers = catalog[mapId]
 	if not mapTiers then

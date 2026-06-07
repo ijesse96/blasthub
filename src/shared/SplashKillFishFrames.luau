@@ -17,10 +17,18 @@ local SWIM_YAW_ATTRIBUTE = "SplashSwimYaw"
 local TARGET_KIND_WATER = "water"
 local TARGET_KIND_SHARK = "shark"
 local TARGET_KIND_BOAT = "boat"
+local TARGET_KIND_MONSTER = "monster"
 local TARGET_SIZE_TIER_ATTRIBUTE = "SplashTargetSizeTier"
 local TARGET_SIZE_COMMON = "common"
 local TARGET_SIZE_RARE = "rare"
 local TARGET_SIZE_LEGENDARY = "legendary"
+local TARGET_SIZE_JACKPOT = "jackpot"
+local MONSTER_EVENT_ACTIVE_ATTRIBUTE = "SplashMonsterEventActive"
+local BOAT_CALM_COVER_IMAGE_ID_ATTRIBUTE = "SplashBoatCalmCoverImageId"
+local MONSTER_PHASE_ATTRIBUTE = "SplashMonsterPhase"
+local MONSTER_PHASE_EMERGE = "emerge"
+local MONSTER_PHASE_IDLE = "idle"
+local MONSTER_PHASE_SUBMERGE = "submerge"
 
 local DEFAULT_TIER: FishTier = "common"
 
@@ -110,6 +118,17 @@ local function pickLegendarySplashFish(mapId: string?): (string, FishTier)
 	return imageId, tier
 end
 
+local function pickJackpotSplashFish(mapId: string?): (string, FishTier)
+	local resolvedMapId = mapId or getActiveMapId()
+	local ids = SplashFishCatalog.getJackpotSpawnableIdsForMap(resolvedMapId)
+	if #ids == 0 then
+		return pickLegendarySplashFish(mapId)
+	end
+	local imageId = pickFromList(ids)
+	local tier = inferTierForImageId(imageId, mapId)
+	return imageId, tier
+end
+
 local function pickImageId(tier: FishTier?): string
 	local mapId = getActiveMapId()
 	local resolvedTier = tier or DEFAULT_TIER
@@ -137,10 +156,18 @@ return {
 	TARGET_KIND_WATER = TARGET_KIND_WATER,
 	TARGET_KIND_SHARK = TARGET_KIND_SHARK,
 	TARGET_KIND_BOAT = TARGET_KIND_BOAT,
+	TARGET_KIND_MONSTER = TARGET_KIND_MONSTER,
 	TARGET_SIZE_TIER_ATTRIBUTE = TARGET_SIZE_TIER_ATTRIBUTE,
 	TARGET_SIZE_COMMON = TARGET_SIZE_COMMON,
 	TARGET_SIZE_RARE = TARGET_SIZE_RARE,
 	TARGET_SIZE_LEGENDARY = TARGET_SIZE_LEGENDARY,
+	TARGET_SIZE_JACKPOT = TARGET_SIZE_JACKPOT,
+	MONSTER_EVENT_ACTIVE_ATTRIBUTE = MONSTER_EVENT_ACTIVE_ATTRIBUTE,
+	BOAT_CALM_COVER_IMAGE_ID_ATTRIBUTE = BOAT_CALM_COVER_IMAGE_ID_ATTRIBUTE,
+	MONSTER_PHASE_ATTRIBUTE = MONSTER_PHASE_ATTRIBUTE,
+	MONSTER_PHASE_EMERGE = MONSTER_PHASE_EMERGE,
+	MONSTER_PHASE_IDLE = MONSTER_PHASE_IDLE,
+	MONSTER_PHASE_SUBMERGE = MONSTER_PHASE_SUBMERGE,
 	DEFAULT_TIER = DEFAULT_TIER,
 	getActiveMapId = getActiveMapId,
 	getFrameIds = getFrameIds,
@@ -151,6 +178,7 @@ return {
 	pickRareTargetFish = pickRareTargetFish,
 	pickRareSplashFish = pickRareSplashFish,
 	pickLegendarySplashFish = pickLegendarySplashFish,
+	pickJackpotSplashFish = pickJackpotSplashFish,
 	pickImageId = pickImageId,
 	getFrameCount = getFrameCount,
 	applyFullImageToLabel = applyFullImageToLabel,

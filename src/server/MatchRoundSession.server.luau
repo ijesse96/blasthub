@@ -370,6 +370,7 @@ local function startActiveRound()
 		leaderboard = buildLeaderboardRows(),
 		turretBoards = buildTurretBoardRows(),
 	})
+	MatchRoundBridge.fireActiveRoundStarted()
 	task.wait(ROUND_SECONDS)
 end
 
@@ -494,6 +495,7 @@ local function finishRound(mapId: string)
 	phase = "RoundEndedResults"
 	currentRoundEndServerTime = 0
 
+	MatchRoundBridge.fireRoundEnded()
 	MatchRoundBridge.clearFishNow()
 
 	local scoredHumanCount = countSet(activeRoundParticipants)

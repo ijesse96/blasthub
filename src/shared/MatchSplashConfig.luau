@@ -29,8 +29,19 @@ export type SplashVisual = {
 	rareTargetStuds: number?,
 	rareTargetArtYawOffsetRad: number?,
 	rareTargetSwimSpeedStudsPerSec: number?,
+	commonTargetCashMin: number?,
+	commonTargetCashMax: number?,
+	largeTargetCashMin: number?,
+	largeTargetCashMax: number?,
+	rareTargetCashMin: number?,
+	rareTargetCashMax: number?,
+	legendaryTargetCashMin: number?,
+	legendaryTargetCashMax: number?,
 	-- Future: separate cover PNG targets for legendary / jackpot.
 	legendaryTargetImageId: string?,
+	legendaryTargetImageIdInverted: string?,
+	legendaryTargetStormImageId: string?,
+	legendaryTargetStormImageIdInverted: string?,
 	legendaryTargetStuds: number?,
 	legendaryTargetRespawnDelayMinSec: number?,
 	legendaryTargetRespawnDelayMaxSec: number?,
@@ -40,7 +51,20 @@ export type SplashVisual = {
 	legendaryTargetHealthMax: number?,
 	legendaryTargetWakeFrameIds: { string }?,
 	legendaryTargetFrameIds: { string }?,
-	jackpotTargetFrameIds: { string }?,
+	jackpotTargetEmergenceFrameIds: { string }?,
+	jackpotTargetStuds: number?,
+	jackpotTargetRespawnDelayMinSec: number?,
+	jackpotTargetRespawnDelayMaxSec: number?,
+	jackpotTargetHealthMin: number?,
+	jackpotTargetHealthMax: number?,
+	jackpotTargetCycleCount: number?,
+	baseplateStormFrameIds: { string }?,
+	baseplateStormChopRepeatCount: number?,
+	baseplateStormFrameStepSec: number?,
+	baseplateNormalTextureId: string?,
+	baseplateStormColor: { number }?,
+	baseplateStormBrightness: number?,
+	baseplateStormAmbient: { number }?,
 }
 
 local ACTIVE_MAP_ID_NAME = "ActiveMapId"
@@ -65,12 +89,57 @@ local DEFAULT_COMMON_TARGET_STUDS = 13
 local DEFAULT_RARE_TARGET_STUDS = 28
 local DEFAULT_RARE_TARGET_SWIM_SPEED = 10
 local LEGENDARY_BOAT_IMAGE = "rbxassetid://89496466764948"
-local DEFAULT_LEGENDARY_TARGET_STUDS = 50
+local LEGENDARY_BOAT_IMAGE_INVERTED = "rbxassetid://79516053583456"
+local LEGENDARY_BOAT_STORM_IMAGE = "rbxassetid://112303721335839"
+local LEGENDARY_BOAT_STORM_IMAGE_INVERTED = "rbxassetid://117101987723528"
+local DEFAULT_LEGENDARY_TARGET_STUDS = 64
 local DEFAULT_LEGENDARY_RESPAWN_DELAY_MIN = 15
 local DEFAULT_LEGENDARY_RESPAWN_DELAY_MAX = 30
 local DEFAULT_LEGENDARY_SWIM_SPEED = 8
-local DEFAULT_LEGENDARY_TARGET_HEALTH_MIN = 100
-local DEFAULT_LEGENDARY_TARGET_HEALTH_MAX = 150
+local DEFAULT_TEST_TARGET_HEALTH_MIN = 1
+local DEFAULT_TEST_TARGET_HEALTH_MAX = 3
+local DEFAULT_COMMON_TARGET_CASH_MIN = 1
+local DEFAULT_COMMON_TARGET_CASH_MAX = 5
+local DEFAULT_LARGE_TARGET_CASH_MIN = 8
+local DEFAULT_LARGE_TARGET_CASH_MAX = 15
+local DEFAULT_RARE_TARGET_CASH_MIN = 10
+local DEFAULT_RARE_TARGET_CASH_MAX = 20
+local DEFAULT_LEGENDARY_TARGET_CASH_MIN = 25
+local DEFAULT_LEGENDARY_TARGET_CASH_MAX = 40
+local DEFAULT_LEGENDARY_TARGET_HEALTH_MIN = DEFAULT_TEST_TARGET_HEALTH_MIN
+local DEFAULT_LEGENDARY_TARGET_HEALTH_MAX = DEFAULT_TEST_TARGET_HEALTH_MAX
+local JACKPOT_MONSTER_FRAMES = {
+	"rbxassetid://124555826257310",
+	"rbxassetid://79722962327885",
+	"rbxassetid://80374052051181",
+	"rbxassetid://92917272030555",
+	"rbxassetid://124722726896606",
+}
+local DEFAULT_JACKPOT_TARGET_STUDS = 72
+local DEFAULT_JACKPOT_RESPAWN_DELAY_MIN = 15
+local DEFAULT_JACKPOT_RESPAWN_DELAY_MAX = 30
+local DEFAULT_JACKPOT_TARGET_HEALTH_MIN = DEFAULT_TEST_TARGET_HEALTH_MIN
+local DEFAULT_JACKPOT_TARGET_HEALTH_MAX = DEFAULT_TEST_TARGET_HEALTH_MAX
+local JACKPOT_MONSTER_FRAME_STEP_SEC = 0.18
+local JACKPOT_MONSTER_IDLE_FRAME_STEP_SEC = 0.45
+local DEFAULT_JACKPOT_IDLE_LIFETIME_SEC = 5
+local DEFAULT_JACKPOT_CYCLE_COUNT = 5
+local BASEPLATE_STORM_FRAMES = {
+	"rbxassetid://73257635473989",
+	"rbxassetid://122115755994510",
+	"rbxassetid://130565108026527",
+	"rbxassetid://114932975478478",
+	"rbxassetid://70939061678969",
+	"rbxassetid://112415082476366",
+	"rbxassetid://84374742726760",
+	"rbxassetid://80617259726816",
+}
+local DEFAULT_BASEPLATE_STORM_CHOP_REPEAT = 3
+local DEFAULT_BASEPLATE_STORM_FRAME_STEP_SEC = 0.15
+local BASEPLATE_NORMAL_TEXTURE = "rbxassetid://110147544715077"
+local BASEPLATE_STORM_COLOR = { 0.12, 0.16, 0.22 }
+local DEFAULT_BASEPLATE_STORM_BRIGHTNESS = 1.3
+local BASEPLATE_STORM_AMBIENT = { 0.15, 0.18, 0.25 }
 local JUNGLE_SPLASH_IMAGE = "rbxassetid://110419001189017"
 local DEFAULT_HIT_NET = "rbxassetid://135625585340416"
 local DEFAULT_HIT_NET_RED = "rbxassetid://106446005308723"
@@ -95,7 +164,18 @@ local byMapId: { [string]: SplashVisual } = {
 		rareTargetStuds = DEFAULT_RARE_TARGET_STUDS,
 		rareTargetArtYawOffsetRad = 0,
 		rareTargetSwimSpeedStudsPerSec = DEFAULT_RARE_TARGET_SWIM_SPEED,
+		commonTargetCashMin = DEFAULT_COMMON_TARGET_CASH_MIN,
+		commonTargetCashMax = DEFAULT_COMMON_TARGET_CASH_MAX,
+		largeTargetCashMin = DEFAULT_LARGE_TARGET_CASH_MIN,
+		largeTargetCashMax = DEFAULT_LARGE_TARGET_CASH_MAX,
+		rareTargetCashMin = DEFAULT_RARE_TARGET_CASH_MIN,
+		rareTargetCashMax = DEFAULT_RARE_TARGET_CASH_MAX,
+		legendaryTargetCashMin = DEFAULT_LEGENDARY_TARGET_CASH_MIN,
+		legendaryTargetCashMax = DEFAULT_LEGENDARY_TARGET_CASH_MAX,
 		legendaryTargetImageId = LEGENDARY_BOAT_IMAGE,
+		legendaryTargetImageIdInverted = LEGENDARY_BOAT_IMAGE_INVERTED,
+		legendaryTargetStormImageId = LEGENDARY_BOAT_STORM_IMAGE,
+		legendaryTargetStormImageIdInverted = LEGENDARY_BOAT_STORM_IMAGE_INVERTED,
 		legendaryTargetStuds = DEFAULT_LEGENDARY_TARGET_STUDS,
 		legendaryTargetRespawnDelayMinSec = DEFAULT_LEGENDARY_RESPAWN_DELAY_MIN,
 		legendaryTargetRespawnDelayMaxSec = DEFAULT_LEGENDARY_RESPAWN_DELAY_MAX,
@@ -103,6 +183,20 @@ local byMapId: { [string]: SplashVisual } = {
 		legendaryTargetSwimSpeedStudsPerSec = DEFAULT_LEGENDARY_SWIM_SPEED,
 		legendaryTargetHealthMin = DEFAULT_LEGENDARY_TARGET_HEALTH_MIN,
 		legendaryTargetHealthMax = DEFAULT_LEGENDARY_TARGET_HEALTH_MAX,
+		jackpotTargetEmergenceFrameIds = JACKPOT_MONSTER_FRAMES,
+		jackpotTargetStuds = DEFAULT_JACKPOT_TARGET_STUDS,
+		jackpotTargetRespawnDelayMinSec = DEFAULT_JACKPOT_RESPAWN_DELAY_MIN,
+		jackpotTargetRespawnDelayMaxSec = DEFAULT_JACKPOT_RESPAWN_DELAY_MAX,
+		jackpotTargetHealthMin = DEFAULT_JACKPOT_TARGET_HEALTH_MIN,
+		jackpotTargetHealthMax = DEFAULT_JACKPOT_TARGET_HEALTH_MAX,
+		jackpotTargetCycleCount = DEFAULT_JACKPOT_CYCLE_COUNT,
+		baseplateStormFrameIds = BASEPLATE_STORM_FRAMES,
+		baseplateStormChopRepeatCount = DEFAULT_BASEPLATE_STORM_CHOP_REPEAT,
+		baseplateStormFrameStepSec = DEFAULT_BASEPLATE_STORM_FRAME_STEP_SEC,
+		baseplateNormalTextureId = BASEPLATE_NORMAL_TEXTURE,
+		baseplateStormColor = BASEPLATE_STORM_COLOR,
+		baseplateStormBrightness = DEFAULT_BASEPLATE_STORM_BRIGHTNESS,
+		baseplateStormAmbient = BASEPLATE_STORM_AMBIENT,
 	},
 	king_of_the_jungle = {
 		mode = "billboard_png",
@@ -237,8 +331,73 @@ function MatchSplashConfig.getRareTargetSwimSpeedStudsPerSec(mapId: string?): nu
 	return visual.rareTargetSwimSpeedStudsPerSec or DEFAULT_RARE_TARGET_SWIM_SPEED
 end
 
+local function rollCashReward(minCash: number?, maxCash: number?, defaultMin: number, defaultMax: number): number
+	local resolvedMin = if typeof(minCash) == "number" then minCash else defaultMin
+	local resolvedMax = if typeof(maxCash) == "number" then maxCash else defaultMax
+	return math.random(math.floor(resolvedMin), math.max(math.floor(resolvedMax), math.floor(resolvedMin)))
+end
+
+function MatchSplashConfig.rollCommonTargetCashReward(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return rollCashReward(visual.commonTargetCashMin, visual.commonTargetCashMax, DEFAULT_COMMON_TARGET_CASH_MIN, DEFAULT_COMMON_TARGET_CASH_MAX)
+end
+
+function MatchSplashConfig.rollLargeTargetCashReward(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return rollCashReward(visual.largeTargetCashMin, visual.largeTargetCashMax, DEFAULT_LARGE_TARGET_CASH_MIN, DEFAULT_LARGE_TARGET_CASH_MAX)
+end
+
+function MatchSplashConfig.rollRareTargetCashReward(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return rollCashReward(visual.rareTargetCashMin, visual.rareTargetCashMax, DEFAULT_RARE_TARGET_CASH_MIN, DEFAULT_RARE_TARGET_CASH_MAX)
+end
+
+function MatchSplashConfig.rollLegendaryTargetCashReward(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return rollCashReward(visual.legendaryTargetCashMin, visual.legendaryTargetCashMax, DEFAULT_LEGENDARY_TARGET_CASH_MIN, DEFAULT_LEGENDARY_TARGET_CASH_MAX)
+end
+
 function MatchSplashConfig.getLegendaryTargetImageId(mapId: string?): string?
 	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	local id = visual.legendaryTargetImageId
+	if typeof(id) == "string" and id ~= "" then
+		return id
+	end
+	return nil
+end
+
+function MatchSplashConfig.getBoatPatrolZSignFromSwimYaw(swimYaw: number): number
+	if math.abs(swimYaw - math.pi) < math.abs(swimYaw) then
+		return -1
+	end
+	return 1
+end
+
+function MatchSplashConfig.getLegendaryTargetCoverImageIdForZSign(
+	mapId: string?,
+	zSign: number,
+	duringMonsterStorm: boolean?
+): string?
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	if duringMonsterStorm then
+		if zSign < 0 then
+			local stormInverted = visual.legendaryTargetStormImageIdInverted
+			if typeof(stormInverted) == "string" and stormInverted ~= "" then
+				return stormInverted
+			end
+		else
+			local stormId = visual.legendaryTargetStormImageId
+			if typeof(stormId) == "string" and stormId ~= "" then
+				return stormId
+			end
+		end
+	end
+	if zSign < 0 then
+		local inverted = visual.legendaryTargetImageIdInverted
+		if typeof(inverted) == "string" and inverted ~= "" then
+			return inverted
+		end
+	end
 	local id = visual.legendaryTargetImageId
 	if typeof(id) == "string" and id ~= "" then
 		return id
@@ -288,6 +447,104 @@ function MatchSplashConfig.getLegendaryTargetWakeFrameIds(mapId: string?): { str
 		return wake
 	end
 	return MatchSplashConfig.getSplashFrameIds(mapId)
+end
+
+function MatchSplashConfig.getJackpotTargetEmergenceFrameIds(mapId: string?): { string }?
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	local frames = visual.jackpotTargetEmergenceFrameIds
+	if frames and #frames >= 2 then
+		return frames
+	end
+	return nil
+end
+
+function MatchSplashConfig.getJackpotTargetStuds(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return visual.jackpotTargetStuds or DEFAULT_JACKPOT_TARGET_STUDS
+end
+
+function MatchSplashConfig.getJackpotTargetRespawnDelayMinSec(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return visual.jackpotTargetRespawnDelayMinSec or DEFAULT_JACKPOT_RESPAWN_DELAY_MIN
+end
+
+function MatchSplashConfig.getJackpotTargetRespawnDelayMaxSec(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return visual.jackpotTargetRespawnDelayMaxSec or DEFAULT_JACKPOT_RESPAWN_DELAY_MAX
+end
+
+function MatchSplashConfig.getJackpotTargetHealthMin(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return visual.jackpotTargetHealthMin or DEFAULT_JACKPOT_TARGET_HEALTH_MIN
+end
+
+function MatchSplashConfig.getJackpotTargetHealthMax(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return visual.jackpotTargetHealthMax or DEFAULT_JACKPOT_TARGET_HEALTH_MAX
+end
+
+function MatchSplashConfig.getJackpotTargetAnimStepSec(_mapId: string?): number
+	return JACKPOT_MONSTER_FRAME_STEP_SEC
+end
+
+function MatchSplashConfig.getJackpotTargetIdleAnimStepSec(_mapId: string?): number
+	return JACKPOT_MONSTER_IDLE_FRAME_STEP_SEC
+end
+
+function MatchSplashConfig.getJackpotTargetIdleLifetimeSec(_mapId: string?): number
+	return DEFAULT_JACKPOT_IDLE_LIFETIME_SEC
+end
+
+function MatchSplashConfig.getJackpotTargetSubmergeDurationSec(mapId: string?): number
+	local frames = MatchSplashConfig.getJackpotTargetEmergenceFrameIds(mapId)
+	local count = if frames then #frames else 6
+	return count * JACKPOT_MONSTER_FRAME_STEP_SEC
+end
+
+function MatchSplashConfig.getJackpotTargetCycleCount(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return visual.jackpotTargetCycleCount or DEFAULT_JACKPOT_CYCLE_COUNT
+end
+
+function MatchSplashConfig.getBaseplateStormFrameIds(mapId: string?): { string }?
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	local frames = visual.baseplateStormFrameIds
+	if frames and #frames >= 2 then
+		return frames
+	end
+	return nil
+end
+
+function MatchSplashConfig.getBaseplateStormChopRepeatCount(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return visual.baseplateStormChopRepeatCount or DEFAULT_BASEPLATE_STORM_CHOP_REPEAT
+end
+
+function MatchSplashConfig.getBaseplateStormFrameStepSec(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return visual.baseplateStormFrameStepSec or DEFAULT_BASEPLATE_STORM_FRAME_STEP_SEC
+end
+
+function MatchSplashConfig.getBaseplateNormalTextureId(mapId: string?): string
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return visual.baseplateNormalTextureId or BASEPLATE_NORMAL_TEXTURE
+end
+
+function MatchSplashConfig.getBaseplateStormColor(mapId: string?): Color3
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	local rgb = visual.baseplateStormColor or BASEPLATE_STORM_COLOR
+	return Color3.new(rgb[1], rgb[2], rgb[3])
+end
+
+function MatchSplashConfig.getBaseplateStormBrightness(mapId: string?): number
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	return visual.baseplateStormBrightness or DEFAULT_BASEPLATE_STORM_BRIGHTNESS
+end
+
+function MatchSplashConfig.getBaseplateStormAmbient(mapId: string?): Color3
+	local visual = MatchSplashConfig.getForMapId(mapId or MatchSplashConfig.getActiveMapId())
+	local rgb = visual.baseplateStormAmbient or BASEPLATE_STORM_AMBIENT
+	return Color3.new(rgb[1], rgb[2], rgb[3])
 end
 
 MatchSplashConfig.DEFAULT_HIT_NET_RED = DEFAULT_HIT_NET_RED
