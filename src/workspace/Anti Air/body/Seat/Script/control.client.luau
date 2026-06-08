@@ -4,8 +4,6 @@ local RELOAD_SOUND_CUTOFF = 0.08
 local CROSSHAIR_DISTANCE = 5000
 local FIRE_REMOTE_NAME = "AntiAirPlayerFire"
 local HIT_FLASH_VFX_REMOTE_NAME = "AntiAirConveyorHitFlashVfx"
-local SPLASH_REEL_TAP_REMOTE_NAME = "AntiAirSplashReelTap"
-local SPLASH_REEL_METER_REMOTE_NAME = "AntiAirSplashReelMeterState"
 local PLAYER_PROJECTILES_FOLDER_NAME = "AntiAirPlayerProjectiles"
 
 local function resolveGunModel(): Model?
@@ -68,14 +66,6 @@ if not hitFlashVfxRemote then
 	warn("[AntiAirFlashClient] Missing RemoteEvent", HIT_FLASH_VFX_REMOTE_NAME, "- predict hit flash disabled")
 end
 
-local splashTapInst = replicatedStorage:WaitForChild(SPLASH_REEL_TAP_REMOTE_NAME, 30)
-local splashMeterInst = replicatedStorage:WaitForChild(SPLASH_REEL_METER_REMOTE_NAME, 30)
-local splashTapRemote: RemoteEvent? = if splashTapInst:IsA("RemoteEvent") then splashTapInst else nil
-local splashMeterRemote: RemoteEvent? = if splashMeterInst:IsA("RemoteEvent") then splashMeterInst else nil
-if not splashTapRemote or not splashMeterRemote then
-	warn("[AntiAirFlashClient] Missing splash reel RemoteEvents — reel meter UI disabled")
-end
-
 local MATCH_ROUND_REMOTES_NAME = "MatchRoundRemotes"
 local MATCH_ROUND_STATE_NAME = "RoundState"
 local matchRoundPhase = "Idle"
@@ -119,13 +109,19 @@ local function canShootByMatchRoundState(): boolean
 end
 
 local Ricochet = require(replicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirRicochetProjectile") :: ModuleScript)
-local HarpoonVisual = require(replicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirHarpoonProjectileVisual") :: ModuleScript)
-local SplashReelConfig = require(replicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirSplashReelConfig"))
+local AutoFireConfig = require(replicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirAutoFireConfig"))
+local AutoTarget = require(replicatedStorage:WaitForChild("Shared"):WaitForChild("AntiAirAutoTarget"))
+
+local function isLocalAutoFireEnabled(): boolean
+	if player:GetAttribute(AutoFireConfig.AUTO_FIRE_PLAYER_ATTR) == false then
+		return false
+	end
+	return AutoFireConfig.defaultAutoFireEnabled
+end
 
 local BULLET_SPEED = 280
 local BULLET_LIFETIME_SEC = 7
 local PREDICT_RECONCILE_TIMEOUT_SEC = 0.55
-local HARPOON_RETRACT_DURATION_SEC = 0.38
 local MUZZLE_OFFSET_STUDS = 5
 -- Must match AntiAirPlayerFire.server.luau
 local MAX_AIM_DIRECTION_Y = 0.42
@@ -185,7 +181,7 @@ else
 	end)
 end
 
-local function playerHasBlockingHarpoonShot(): boolean
+local function playerHasBlockingProjectile(): boolean
 	for _ in pairs(pendingPredictionBySeq) do
 		return true
 	end
@@ -271,136 +267,6 @@ end
 local crosshairGui, crosshairCenter, crosshairHorizontal, crosshairVertical = createCrosshair()
 local mobileFireGui: ScreenGui? = nil
 local mobileShootButton: TextButton? = nil
-local splashReelGui: ScreenGui? = nil
-local splashReelFill: Frame? = nil
-local splashMeterVisible = false
-local splashMeterConn: RBXScriptConnection? = nil
-local splashDesktopInputConn: RBXScriptConnection? = nil
-
-local function destroySplashReelGui()
-	splashMeterVisible = false
-	if splashReelGui then
-		splashReelGui:Destroy()
-		splashReelGui = nil
-	end
-	splashReelFill = nil
-end
-
-local function setSplashReelMeterFill(m: number)
-	if splashReelFill and splashReelFill.Parent then
-		splashReelFill.Size = UDim2.new(math.clamp(m, 0, 1), 0, 1, 0)
-	end
-end
-
-local function requestSplashReelTap()
-	if splashTapRemote then
-		splashTapRemote:FireServer()
-	end
-end
-
-local function showSplashReelGui(initialMeter: number)
-	if not SplashReelConfig.TAP_TO_REEL_ENABLED then
-		return
-	end
-	destroySplashReelGui()
-	splashMeterVisible = true
-
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "AntiAirSplashReelMeter"
-	gui.ResetOnSpawn = false
-	gui.IgnoreGuiInset = true
-	gui.DisplayOrder = 60
-	gui.Parent = playerGui
-
-	local holder = Instance.new("Frame")
-	holder.Name = "Holder"
-	holder.AnchorPoint = Vector2.new(0.5, 1)
-	holder.Position = UDim2.new(0.5, 0, 1, -120)
-	holder.Size = UDim2.fromOffset(280, 72)
-	holder.BackgroundTransparency = 1
-	holder.Parent = gui
-
-	local barBack = Instance.new("Frame")
-	barBack.Name = "BarBack"
-	barBack.Size = UDim2.new(1, 0, 0, 18)
-	barBack.Position = UDim2.new(0, 0, 0, 0)
-	barBack.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-	barBack.BorderSizePixel = 0
-	barBack.Parent = holder
-	local barCorner = Instance.new("UICorner")
-	barCorner.CornerRadius = UDim.new(0, 6)
-	barCorner.Parent = barBack
-
-	local fill = Instance.new("Frame")
-	fill.Name = "Fill"
-	fill.AnchorPoint = Vector2.new(0, 0.5)
-	fill.Position = UDim2.new(0, 0, 0.5, 0)
-	fill.Size = UDim2.new(math.clamp(initialMeter, 0, 1), 0, 1, 0)
-	fill.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
-	fill.BorderSizePixel = 0
-	fill.Parent = barBack
-	local fillCorner = Instance.new("UICorner")
-	fillCorner.CornerRadius = UDim.new(0, 4)
-	fillCorner.Parent = fill
-
-	local tapBtn = Instance.new("TextButton")
-	tapBtn.Name = "TapReel"
-	tapBtn.Size = UDim2.new(1, 0, 0, 42)
-	tapBtn.Position = UDim2.new(0, 0, 0, 28)
-	tapBtn.BackgroundColor3 = Color3.fromRGB(50, 120, 200)
-	tapBtn.Text = "TAP TO REEL"
-	tapBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	tapBtn.Font = Enum.Font.GothamBold
-	tapBtn.TextSize = 18
-	tapBtn.BorderSizePixel = 0
-	tapBtn.AutoButtonColor = true
-	tapBtn.Parent = holder
-	local tapCorner = Instance.new("UICorner")
-	tapCorner.CornerRadius = UDim.new(0, 8)
-	tapCorner.Parent = tapBtn
-
-	tapBtn.MouseButton1Click:Connect(function()
-		requestSplashReelTap()
-	end)
-
-	splashReelGui = gui
-	splashReelFill = fill
-end
-
-if splashMeterRemote then
-	splashMeterConn = splashMeterRemote.OnClientEvent:Connect(function(visible: unknown, meter: unknown)
-		if not SplashReelConfig.TAP_TO_REEL_ENABLED then
-			return
-		end
-		if visible ~= true then
-			destroySplashReelGui()
-			return
-		end
-		local m = if typeof(meter) == "number" then meter else 0
-		if splashReelGui and splashReelFill then
-			setSplashReelMeterFill(m)
-		else
-			showSplashReelGui(m)
-		end
-		splashMeterVisible = true
-	end)
-end
-
-splashDesktopInputConn = userInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
-	if gameProcessed then
-		return
-	end
-	if not splashMeterVisible then
-		return
-	end
-	if
-		input.KeyCode == Enum.KeyCode.F
-		or input.KeyCode == Enum.KeyCode.R
-		or input.KeyCode == Enum.KeyCode.Space
-	then
-		requestSplashReelTap()
-	end
-end)
 
 local DISABLE_JUMP_ACTION = "AntiAirDisableJump"
 local DEBUG_FLASH = true
@@ -646,7 +512,6 @@ local function isScreenPointOverBlockingGui(screenX: number, screenY: number): b
 				sg
 				and (
 					sg.Name == "AntiAirMobileControls"
-					or sg.Name == "AntiAirSplashReelMeter"
 					or sg.Name == "ArenaSkyCamGui"
 				)
 			then
@@ -694,6 +559,10 @@ local function applyTurretAimTowardWorld(worldPoint: Vector3)
 end
 
 local function createMobileControls()
+	if not AutoFireConfig.MANUAL_FIRE_ENABLED then
+		return nil, nil
+	end
+
 	local controlsGui = Instance.new("ScreenGui")
 	controlsGui.Name = "AntiAirMobileControls"
 	controlsGui.ResetOnSpawn = false
@@ -778,13 +647,16 @@ local function fireOnce(
 	chosenSplash: Model?,
 	preservePitch: boolean?
 )
+	if not AutoFireConfig.MANUAL_FIRE_ENABLED then
+		return
+	end
 	if not forceShoot and not shootHeld then
 		return
 	end
 	if not canShootByMatchRoundState() then
 		return
 	end
-	if playerHasBlockingHarpoonShot() then
+	if playerHasBlockingProjectile() then
 		return
 	end
 
@@ -802,7 +674,7 @@ local function fireOnce(
 	local shotSeq = predictShotSeq
 	local predictPart = Instance.new("Part")
 	predictPart.Name = "AntiAirPredictTracer"
-	predictPart.Size = Vector3.new(0.4, 0.4, 22)
+	predictPart.Size = Vector3.new(0.4, 0.4, 9)
 	predictPart.CFrame = CFrame.new(spawnPosition, spawnPosition + aimLook * CROSSHAIR_DISTANCE)
 	predictPart.BrickColor = BrickColor.new("Really red")
 	predictPart.Material = Enum.Material.Neon
@@ -810,10 +682,6 @@ local function fireOnce(
 	predictPart.CanTouch = false
 	predictPart.Anchored = true
 	predictPart.Parent = workspace
-
-	local rope = HarpoonVisual.createRopeController(predictPart, gunPart, {
-		muzzleStuds = MUZZLE_OFFSET_STUDS,
-	})
 
 	local rayExclude: { Instance } = { gun, predictPart }
 	if player.Character then
@@ -827,13 +695,6 @@ local function fireOnce(
 		onConveyorHit = function(hitPart: BasePart)
 			requestPredictHitFlash(hitPart)
 			return nil
-		end,
-		retractToPart = gunPart,
-		retractDuration = HARPOON_RETRACT_DURATION_SEC,
-		retractMuzzleStuds = MUZZLE_OFFSET_STUDS,
-		retractOnlyOnHit = true,
-		onBounce = function(worldCorner: Vector3)
-			rope.addCorner(worldCorner)
 		end,
 	})
 	pendingPredictionBySeq[shotSeq] = {
@@ -981,6 +842,9 @@ local function fireAtWorldPoint(
 	isSplash: boolean?,
 	chosenSplash: Model?
 )
+	if not AutoFireConfig.MANUAL_FIRE_ENABLED then
+		return
+	end
 	if typeof(screenX) == "number" and typeof(screenY) == "number" then
 		playPressFeedback(screenX, screenY, worldPoint, isSplash == true)
 	else
@@ -1001,9 +865,9 @@ local function fireAtWorldPoint(
 	shootHeld = prevShootHeld
 end
 
--- Splash as button: tap/click selects splash, turret + harpoon lock to its center.
+-- Splash as button: tap/click selects splash, turret locks to its center.
 local function tryPressSplashButton(screenX: number, screenY: number): boolean
-	if splashMeterVisible then
+	if not AutoFireConfig.MANUAL_FIRE_ENABLED then
 		return false
 	end
 	if isScreenPointOverBlockingGui(screenX, screenY) then
@@ -1016,7 +880,7 @@ local function tryPressSplashButton(screenX: number, screenY: number): boolean
 	if not canShootByMatchRoundState() then
 		return false
 	end
-	if playerHasBlockingHarpoonShot() then
+	if playerHasBlockingProjectile() then
 		return false
 	end
 	fireAtWorldPoint(
@@ -1032,7 +896,7 @@ end
 
 -- Sky / top-down: splash button first, else ground tap.
 local function tryArenaSkyFireFromScreen(screenX: number, screenY: number): boolean
-	if splashMeterVisible then
+	if not AutoFireConfig.MANUAL_FIRE_ENABLED then
 		return false
 	end
 	if isScreenPointOverBlockingGui(screenX, screenY) then
@@ -1041,7 +905,7 @@ local function tryArenaSkyFireFromScreen(screenX: number, screenY: number): bool
 	if not canShootByMatchRoundState() then
 		return false
 	end
-	if playerHasBlockingHarpoonShot() then
+	if playerHasBlockingProjectile() then
 		return false
 	end
 	local splashModel, splashPoint = pickWaterSplashAtScreen(screenX, screenY)
@@ -1123,15 +987,6 @@ local function cleanup()
 		mobileFireGui = nil
 		mobileShootButton = nil
 	end
-	if splashMeterConn then
-		splashMeterConn:Disconnect()
-		splashMeterConn = nil
-	end
-	if splashDesktopInputConn then
-		splashDesktopInputConn:Disconnect()
-		splashDesktopInputConn = nil
-	end
-	destroySplashReelGui()
 	if touchStartConn then
 		touchStartConn:Disconnect()
 		touchStartConn = nil
@@ -1186,6 +1041,9 @@ end
 -- Sky / top-down: tap or click fires (splash preferred, else ground plane under pointer).
 local function bindArenaSplashPointerInput()
 	unbindArenaSplashPointerInput()
+	if not AutoFireConfig.MANUAL_FIRE_ENABLED then
+		return
+	end
 	arenaPointerInputBeganConn = userInputService.InputBegan:Connect(function(input: InputObject, _gameProcessed: boolean)
 		if not isArenaSkyViewActive() then
 			return
@@ -1226,7 +1084,7 @@ if isTouchDevice then
 	end
 
 	mobileFireGui, mobileShootButton = createMobileControls()
-	if mobileShootButton then
+	if mobileShootButton and AutoFireConfig.MANUAL_FIRE_ENABLED then
 		mobileShootButton.InputBegan:Connect(function(input)
 			if isArenaSkyViewActive() then
 				return
@@ -1342,26 +1200,28 @@ if isTouchDevice then
 		end
 	end)
 else
-	mouse.Button1Down:Connect(function()
-		local mouseLoc = userInputService:GetMouseLocation()
-		if isArenaSkyViewActive() then
-			tryArenaSkyFireFromScreen(mouseLoc.X, mouseLoc.Y)
-			return
-		end
-		if tryPressSplashButton(mouseLoc.X, mouseLoc.Y) then
-			return
-		end
-		shootHeld = true
-		holdingFire = true
-		startFiring()
-	end)
-	mouse.Button1Up:Connect(function()
-		if isArenaSkyViewActive() then
-			return
-		end
-		shootHeld = false
-		stopFiring()
-	end)
+	if AutoFireConfig.MANUAL_FIRE_ENABLED then
+		mouse.Button1Down:Connect(function()
+			local mouseLoc = userInputService:GetMouseLocation()
+			if isArenaSkyViewActive() then
+				tryArenaSkyFireFromScreen(mouseLoc.X, mouseLoc.Y)
+				return
+			end
+			if tryPressSplashButton(mouseLoc.X, mouseLoc.Y) then
+				return
+			end
+			shootHeld = true
+			holdingFire = true
+			startFiring()
+		end)
+		mouse.Button1Up:Connect(function()
+			if isArenaSkyViewActive() then
+				return
+			end
+			shootHeld = false
+			stopFiring()
+		end)
+	end
 	skyViewAttrConn = player:GetAttributeChangedSignal(ARENA_SKY_VIEW_ATTR):Connect(function()
 		applySkyViewInputMode()
 	end)
@@ -1369,14 +1229,23 @@ else
 end
 
 while rs:Wait() do
-	if isArenaSkyViewActive() then
+	updateCrosshairFromBarrel()
+
+	if isLocalAutoFireEnabled() then
+		local gunPart = gun.gun:FindFirstChild("gunpart")
+		if gunPart and gunPart:IsA("BasePart") then
+			local target = AutoTarget.pickNearestTarget(gunPart.Position)
+			if target and (target.worldPoint - gun.base.Position).Magnitude > 3 then
+				applyTurretAimTowardWorld(target.worldPoint)
+			end
+		end
+	elseif isArenaSkyViewActive() then
 		local mouseLoc = userInputService:GetMouseLocation()
 		local aimPoint = getSkyAimPointFromScreen(mouseLoc.X, mouseLoc.Y)
 		if aimPoint then
 			applyTurretAimTowardWorld(aimPoint)
 		end
-	else
-		updateCrosshairFromBarrel()
+	elseif AutoFireConfig.MANUAL_FIRE_ENABLED then
 		local pivotWorld = gun.body:GetPrimaryPartCFrame().Position
 		local aimSource = pivotWorld + touchAimDirXZ * 5000
 		if not isTouchDevice then

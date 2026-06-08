@@ -484,7 +484,17 @@ RunService.Heartbeat:Connect(function()
 			end
 			continue
 		end
-		local pos = patrolPosition(b, rec.slotIndex, t)
+		local desiredPos = patrolPosition(b, rec.slotIndex, t)
+		local pos = desiredPos
+		if rec.lastPos then
+			local dx = desiredPos.X - rec.lastPos.X
+			local dz = desiredPos.Z - rec.lastPos.Z
+			local dist = math.sqrt(dx * dx + dz * dz)
+			if dist > 1e-6 then
+				local vel = Vector3.new(dx / dist, 0, dz / dist)
+				pos = SplashSpawnExclusions.deflectPosition(rec.lastPos, vel, dist, 1)
+			end
+		end
 		if not SplashArenaInterior.isInsideArena(pos) then
 			continue
 		end

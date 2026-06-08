@@ -29,9 +29,24 @@ local COVER_IMAGE_NAME = "CoverImage"
 local FISH_IMAGE_NAME = "FishImage"
 
 local tracked: { [Model]: boolean } = {}
+local framesPreloaded = false
+
+local function ensureFramesPreloaded()
+	if framesPreloaded then
+		return
+	end
+	pcall(function()
+		ContentProvider:PreloadAsync(frames)
+	end)
+	framesPreloaded = true
+end
+
+local function isMonsterModel(model: Model): boolean
+	return model:GetAttribute(SplashKillFishFrames.TARGET_KIND_ATTRIBUTE) == SplashKillFishFrames.TARGET_KIND_MONSTER
+end
 
 local function getMonsterCoverLabel(model: Model): ImageLabel?
-	if model:GetAttribute(SplashKillFishFrames.TARGET_KIND_ATTRIBUTE) ~= SplashKillFishFrames.TARGET_KIND_MONSTER then
+	if not isMonsterModel(model) then
 		return nil
 	end
 
@@ -83,6 +98,8 @@ local function getMonsterPhase(model: Model): string?
 end
 
 local function runMonsterAnimation(model: Model, coverLabel: ImageLabel)
+	ensureFramesPreloaded()
+
 	local genRef = { 0 }
 	local generation = 0
 
@@ -168,12 +185,8 @@ local function runMonsterAnimation(model: Model, coverLabel: ImageLabel)
 	end
 end
 
-local function tryHookModel(model: Model)
+local function hookMonsterModel(model: Model, coverLabel: ImageLabel)
 	if tracked[model] then
-		return
-	end
-	local coverLabel = getMonsterCoverLabel(model)
-	if not coverLabel then
 		return
 	end
 	tracked[model] = true
@@ -181,6 +194,79 @@ local function tryHookModel(model: Model)
 		tracked[model] = nil
 	end)
 	runMonsterAnimation(model, coverLabel)
+end
+
+local function waitForMonsterCoverLabel(model: Model, timeoutSec: number): ImageLabel?
+	local deadline = os.clock() + timeoutSec
+	while model.Parent and os.clock() < deadline do
+		local coverLabel = getMonsterCoverLabel(model)
+		if coverLabel then
+			return coverLabel
+		end
+		task.wait()
+	end
+	return nil
+end
+
+local function waitUntilMonsterModel(model: Model, timeoutSec: number): boolean
+	local deadline = os.clock() + timeoutSec
+	while model.Parent and os.clock() < deadline do
+		local kind = model:GetAttribute(SplashKillFishFrames.TARGET_KIND_ATTRIBUTE)
+		if kind == SplashKillFishFrames.TARGET_KIND_MONSTER then
+			return true
+		end
+		if kind ~= nil then
+			return false
+		end
+		task.wait()
+	end
+	return false
+end
+
+local function tryHookModel(model: Model)
+	if tracked[model] then
+		return
+	end
+
+	local coverLabel = getMonsterCoverLabel(model)
+	if coverLabel then
+		hookMonsterModel(model, coverLabel)
+		return
+	end
+
+	task.spawn(function()
+		if not waitUntilMonsterModel(model, 8) then
+			return
+		end
+		if tracked[model] or not model.Parent then
+			return
+		end
+
+		local descendantConn: RBXScriptConnection? = nil
+		descendantConn = model.DescendantAdded:Connect(function()
+			if tracked[model] or not model.Parent then
+				if descendantConn then
+					descendantConn:Disconnect()
+				end
+				return
+			end
+			local label = getMonsterCoverLabel(model)
+			if label then
+				if descendantConn then
+					descendantConn:Disconnect()
+				end
+				hookMonsterModel(model, label)
+			end
+		end)
+
+		local label = waitForMonsterCoverLabel(model, 8)
+		if descendantConn then
+			descendantConn:Disconnect()
+		end
+		if label and not tracked[model] and model.Parent then
+			hookMonsterModel(model, label)
+		end
+	end)
 end
 
 local function hookActiveFolder(folder: Folder)
@@ -198,9 +284,7 @@ local function hookActiveFolder(folder: Folder)
 end
 
 task.spawn(function()
-	pcall(function()
-		ContentProvider:PreloadAsync(frames)
-	end)
+	ensureFramesPreloaded()
 end)
 
 local existing = Workspace:FindFirstChild(ACTIVE_FOLDER_NAME)

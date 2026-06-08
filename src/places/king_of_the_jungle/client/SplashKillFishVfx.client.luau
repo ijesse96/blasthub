@@ -8,8 +8,6 @@ local TweenService = game:GetService("TweenService")
 local RewardUiColors = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RewardUiColors"))
 
 local player = Players.LocalPlayer
-local playerScripts = player:WaitForChild("PlayerScripts")
-local CashFlyVfxUtil = require(playerScripts:WaitForChild("ArenaClient"):WaitForChild("CashFlyVfxUtil"))
 local MatchSplashConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MatchSplashConfig"))
 local SplashFishCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashFishCatalog"))
 local SplashKillFishFrames = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SplashKillFishFrames"))
@@ -61,10 +59,6 @@ local PANEL_STROKE_THICKNESS = 11
 local PANEL_STROKE_TRANSPARENCY = 0.18
 local POP_IN_SEC = 0.3
 local SPARKLE_SPEED = 6
-local CASH_POP_RISE_PX = 28
-local CASH_POP_DURATION = 1.5
-local CASH_POP_FADE_START_ALPHA = 0.42
-local CASH_POP_STROKE = Color3.fromRGB(14, 72, 36)
 local JOIN_WARMUP_BATCH_PAUSE_EVERY = 2
 local PREPARE_LOAD_TIMEOUT_SEC = 10
 local REVEAL_LOAD_TIMEOUT_SEC = 0.5
@@ -78,7 +72,7 @@ local FISH_ZINDEX = 2
 local OVERLAY_ZINDEX = 5
 local PANEL_CORNER_RADIUS = UDim.new(0, 6)
 
--- Built at center during reel (gui disabled); revealed after retract.
+-- Built at center before reveal (gui disabled until celebration runs).
 local CENTER_ROOT_POSITION = UDim2.fromScale(0.5, 0.5)
 
 local playerGui = player:WaitForChild("PlayerGui")
@@ -470,63 +464,6 @@ local function runSparkleLoop(gui: ScreenGui, glowOuter: Frame, durationSec: num
 	end)
 end
 
-local function spawnScreenCashPop(root: Frame, amount: number)
-	local label = Instance.new("TextLabel")
-	label.Name = "CashPop"
-	label.AnchorPoint = Vector2.new(0.5, 0)
-	label.Position = UDim2.new(0.5, 0, 1, 6)
-	label.Size = UDim2.fromOffset(120, 32)
-	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.GothamBold
-	label.TextScaled = true
-	label.TextColor3 = RewardUiColors.PROFIT_GREEN
-	label.TextStrokeColor3 = CASH_POP_STROKE
-	label.TextStrokeTransparency = 0.35
-	label.TextTransparency = 0
-	label.Text = string.format("+$%d", amount)
-	label.ZIndex = 3
-	label.Parent = root
-
-	local sizeCap = Instance.new("UITextSizeConstraint")
-	sizeCap.MaxTextSize = 26
-	sizeCap.MinTextSize = 14
-	sizeCap.Parent = label
-
-	local startPos = label.Position
-	local goalPos = startPos + UDim2.fromOffset(0, -CASH_POP_RISE_PX)
-	local moveTween = TweenService:Create(
-		label,
-		TweenInfo.new(CASH_POP_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Position = goalPos }
-	)
-	moveTween:Play()
-
-	local fadeDuration = CASH_POP_DURATION * (1 - CASH_POP_FADE_START_ALPHA)
-	task.delay(CASH_POP_DURATION * CASH_POP_FADE_START_ALPHA, function()
-		if not label.Parent then
-			return
-		end
-		local fadeInfo = TweenInfo.new(fadeDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-		TweenService:Create(label, fadeInfo, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
-	end)
-end
-
-local function playCashRewardFromFrame(root: Frame, amount: number)
-	if amount <= 0 then
-		return
-	end
-
-	spawnScreenCashPop(root, amount)
-
-	task.defer(function()
-		if not root.Parent then
-			return
-		end
-		local center = root.AbsolutePosition + root.AbsoluteSize * 0.5
-		CashFlyVfxUtil.playFlyFromScreen(playerGui, center.X, center.Y, amount)
-	end)
-end
-
 local function prepareCatch(imageId: string, amount: number)
 	warmImageIdInPoolAsync(imageId)
 	task.spawn(ensureSandCoverWarmed)
@@ -541,7 +478,6 @@ local function playRevealCelebration(pending: PendingCatch, tier: FishTier, spar
 	pending.rootScale.Scale = 1
 	local sparkleSec = sparkleDurationSec or POST_REVEAL_HOLD_SEC
 	runSparkleLoop(pending.gui, pending.glowOuter, sparkleSec, getAccentColorsForTier(tier))
-	playCashRewardFromFrame(pending.root, pending.amount)
 end
 
 -- Runs synchronously until this catch's full sequence finishes (for queue draining).
@@ -601,7 +537,6 @@ local function runRevealCelebration(job: RevealJob)
 		pending.rootScale.Scale = 1
 		pending.fishImage.ImageTransparency = 0
 		pending.rootCanvas.GroupTransparency = 0
-		playCashRewardFromFrame(pending.root, pending.amount)
 		task.wait(POST_REVEAL_HOLD_SEC)
 		destroyActiveCatch()
 	end

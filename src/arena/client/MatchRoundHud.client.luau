@@ -214,11 +214,11 @@ local exitButton = Instance.new("TextButton")
 exitButton.Name = "Exit"
 exitButton.AnchorPoint = Vector2.new(1, 1)
 exitButton.Position = UDim2.new(1, -16, 1, -16)
-exitButton.Size = UDim2.fromOffset(120, 44)
+exitButton.Size = UDim2.fromOffset(88, 32)
 exitButton.BackgroundColor3 = CONTINUE_NO
 exitButton.BorderSizePixel = 0
 exitButton.Font = Enum.Font.GothamBold
-exitButton.TextSize = 18
+exitButton.TextSize = 14
 exitButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 exitButton.Text = "Exit"
 exitButton.Visible = false
@@ -226,7 +226,7 @@ exitButton.ZIndex = 3
 exitButton.Parent = screenGui
 
 local exitButtonCorner = Instance.new("UICorner")
-exitButtonCorner.CornerRadius = UDim.new(0, 8)
+exitButtonCorner.CornerRadius = UDim.new(0, 6)
 exitButtonCorner.Parent = exitButton
 
 local EXIT_BUTTON_TEXT = "Exit"

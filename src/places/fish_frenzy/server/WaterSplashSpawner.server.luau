@@ -33,10 +33,10 @@ local BOAT_TEMPLATE_NAME = "BoatBillboardSplash"
 local MONSTER_TEMPLATE_NAME = "MonsterBillboardSplash"
 local TEMPLATE_HOLDER_NAME = "WaterTemplate"
 local ACTIVE_FOLDER_NAME = "WaterSplashes"
-local MAX_ACTIVE_SPLASHES = 12
-local SPAWN_INTERVAL = 0.5
+local MAX_ACTIVE_SPLASHES = 18
+local SPAWN_INTERVAL = 0.35
 local SPAWN_MARGIN = 6
-local MIN_SPACING_STUDS = 10
+local MIN_SPACING_STUDS = 8
 local MAX_SPAWN_ATTEMPTS = 12
 
 local SCALE_MIN, SCALE_MAX = 0.7, 1.3
@@ -60,8 +60,8 @@ local CONVEYOR_ITEM_CASH_REWARD_ATTRIBUTE = "ConveyorItemCashReward"
 local CONVEYOR_SCALE_ATTRIBUTE = "ConveyorSpawnScale"
 local IS_WATER_SPLASH_ATTRIBUTE = "IsWaterSplash"
 
-local SPLASH_HEALTH_MIN = 1
-local SPLASH_HEALTH_MAX = 3
+local SPLASH_HEALTH_MIN = 10
+local SPLASH_HEALTH_MAX = 15
 local SPLASH_CASH_MIN = 1
 local SPLASH_CASH_MAX = 5
 
@@ -792,7 +792,17 @@ local function runSharkLifecycle(
 		while isAlive() and os.clock() < lifetimeEnd do
 			local dt = RunService.Heartbeat:Wait()
 			local pivot = model:GetPivot()
-			local nextPos = pivot.Position + swimVelocity * sharkDrift.swimSpeed * dt
+			local nextPos, deflectedVel = SplashSpawnExclusions.deflectPosition(
+				pivot.Position,
+				swimVelocity,
+				sharkDrift.swimSpeed,
+				dt
+			)
+			swimVelocity = deflectedVel
+			if math.abs(deflectedVel.X) > 1e-4 or math.abs(deflectedVel.Z) > 1e-4 then
+				sharkDrift.swimYaw = math.atan2(deflectedVel.X, deflectedVel.Z)
+				modelYaw = getModelYawFromSwimYaw(sharkDrift.swimYaw, artOffset)
+			end
 
 			if isNearActiveBoat(nextPos) or isNearActiveMonster(nextPos) then
 				model:PivotTo(CFrame.new(nextPos) * CFrame.Angles(0, modelYaw, 0))
@@ -1233,7 +1243,6 @@ local function trySpawnMonster(
 	model:SetAttribute(IS_WATER_SPLASH_ATTRIBUTE, true)
 	model:SetAttribute(SplashKillFishFrames.TARGET_KIND_ATTRIBUTE, SplashKillFishFrames.TARGET_KIND_MONSTER)
 	model:SetAttribute(SplashKillFishFrames.TARGET_SIZE_TIER_ATTRIBUTE, SplashKillFishFrames.TARGET_SIZE_LEGENDARY)
-	model:SetAttribute(SplashKillFishFrames.MONSTER_PHASE_ATTRIBUTE, SplashKillFishFrames.MONSTER_PHASE_EMERGE)
 
 	local splashFishImageId, splashFishTier = SplashKillFishFrames.pickLegendarySplashFish(MAP_ID)
 	model:SetAttribute(SplashKillFishFrames.IMAGE_ID_ATTRIBUTE, splashFishImageId)
@@ -1257,6 +1266,7 @@ local function trySpawnMonster(
 		persistMonsterHealthFromModel(model)
 	end)
 	model.Parent = activeFolder
+	model:SetAttribute(SplashKillFishFrames.MONSTER_PHASE_ATTRIBUTE, SplashKillFishFrames.MONSTER_PHASE_EMERGE)
 	runMonsterLifecycle(model, activeFolder, bounds, function()
 		clearActiveMonster(onRemoved)
 	end)
